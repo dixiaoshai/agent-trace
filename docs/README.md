@@ -19,4 +19,4 @@
 
 首次使用建议先看快速开始和使用说明；修改接入或协议时先看架构、流程和 v1 协议。
 
-当前使用本地 SQLite、JSON 批次和本机分页 API，两个消费方独立续读。P1 已实现 Trace 前台 `serve`、常驻扫描、租约/心跳和只读 HTTP API；两个消费方 `follow` 自动拉取仍未实现（P2），也没有自动经验提取。pi 和 deepseek-harness 尚无适配实现。
+当前使用本地 SQLite、JSON 批次和本机分页 API，两个消费方独立续读。P1 已实现 Trace 前台 `serve`、常驻扫描、租约/心跳和只读 HTTP API；两个消费方 `follow` 自动拉取已实现（P2），仍有真实宿主/故障矩阵与独立审查待完成；没有自动经验提取。pi 已适配，deepseek-harness 尚无适配实现。

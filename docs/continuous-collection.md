@@ -1,6 +1,6 @@
 # 常驻采集与消费方主动拉取方案
 
-状态：方案已确认；P0 固定配置/API/follow 契约，P1 已实现 Trace 常驻采集、单归档租约/心跳和只读 HTTP API。两个消费方 follow worker 尚未实现（P2），实施交接见工作区 [TODO](../../TODO.md)。更新日期：2026-11-14。
+状态：方案已确认；P0 固定配置/API/follow 契约，P1 已实现 Trace 常驻采集、单归档租约/心跳和只读 HTTP API，P2 的 Stats/Knowledge follow worker 均已实现并通过合成与真实进程端到端验证；P3 的长期真实宿主验收与 reviewer 审查待完成。实施交接见工作区 [TODO](../../TODO.md)。更新日期：2026-11-14。
 
 ## 已确认的方向
 
@@ -24,7 +24,7 @@
 | 同步进度 | 消费库已有事务游标 | 复用游标，补同步任务配置、状态和错误 |
 | 删除 | 导出并手动消费墓碑 | 各 worker 自动取到墓碑并清除投影 |
 
-接口与配置的固定细节见[服务配置](service-config.md)、[本机 API](local-api.md)和[消费方 follow 约定](consumer-follow.md)。P1 已实现 `serve`、扫描调度、租约/心跳和 HTTP 服务端；`config-check` 与手动 CLI 继续保留。消费方 `follow` 命令仍是待实现约定（P2）。
+接口与配置的固定细节见[服务配置](service-config.md)、[本机 API](local-api.md)和[消费方 follow 约定](consumer-follow.md)。P1 已实现 `serve`、扫描调度、租约/心跳和 HTTP 服务端；`config-check` 与手动 CLI 继续保留。消费方 `follow` 命令已实现（P2），端到端验证见[验证记录](validation.md)。
 
 ## 目标架构与进程
 
@@ -135,7 +135,7 @@ Trace 展示采集进度、归档高水位、来源错误与运行心跳；Stats
 
 ## 实施顺序与完成标准
 
-先定义配置与只读接口，完成 Trace 采集/API，再并行完成两个消费方 worker，最后端到端验证。P0/P1 已完成；P2 消费方 worker 尚未实现。前台稳定后再考虑 macOS launchd 托管；不提前修改全局启动项。
+先定义配置与只读接口，完成 Trace 采集/API，再并行完成两个消费方 worker，最后端到端验证。P0/P1/P2 已完成；P3 仍需真实宿主、故障矩阵与独立审查。前台稳定后再考虑 macOS launchd 托管；不提前修改全局启动项。
 
 最小完成条件：新日志自动入库、两个消费方无需手工搬页即可更新、独立停机与重启恢复、重复请求不重复计数、事务中断不跳游标、删除传播、Stats Trace 模式不直读日志、MCP 离线不影响 Knowledge 同步、协议/权限错误明确可见。
 

@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.agent-trace/
+.agent-archive/
+*.sqlite*
+*.export.json

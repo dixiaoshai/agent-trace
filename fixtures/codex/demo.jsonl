@@ -1,0 +1,11 @@
+{"timestamp":"2026-01-01T00:00:00Z","type":"session_meta","payload":{"id":"archive-demo-session","cwd":"/synthetic/demo","cli_version":"0.166.0-alpha.6","source":"cli"}}
+{"timestamp":"2026-01-01T00:00:01Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}
+{"timestamp":"2026-01-01T00:00:02Z","type":"turn_context","payload":{"turn_id":"turn-1","model":"gpt-6.1-sol"}}
+{"timestamp":"2026-01-01T00:00:03Z","type":"event_msg","payload":{"type":"user_message","turn_id":"turn-1","message":"请检查合成示例中重试是否安全，提供依据。"}}
+{"timestamp":"2026-01-01T00:00:04Z","type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"先核对重试的幂等键与测试结果。"}]}}
+{"timestamp":"2026-01-01T00:00:05Z","type":"response_item","payload":{"type":"function_call","call_id":"call-1","name":"exec_command","arguments":"SYNTHETIC_PRIVATE_ARGUMENT"}}
+{"timestamp":"2026-01-01T00:00:06Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-1","output":"SYNTHETIC_PRIVATE_RESULT: duplicate operation rejected by idempotency key"}}
+{"timestamp":"2026-01-01T00:00:07Z","type":"event_msg","payload":{"type":"token_count","turn_id":"turn-1","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":40,"reasoning_output_tokens":10,"total_tokens":140},"last_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":40,"reasoning_output_tokens":10,"total_tokens":140}}}}
+{"timestamp":"2026-01-01T00:00:08Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"合成测试确认重复请求被幂等键拒绝；该结论只适用于此示例。"}]}}
+{"timestamp":"2026-01-01T00:00:09Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1"}}
+{"timestamp":"2026-01-01T00:00:10Z","type":"future_record","payload":{"type":"new_event","synthetic_private":"SYNTHETIC_FUTURE_PAYLOAD"}}

@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "database": ".agent-trace/trace.sqlite",
+  "capture_mode": "metadata",
+  "collection": {
+    "enabled": false,
+    "scan_interval_seconds": 30,
+    "backfill": "none",
+    "sources": [
+      {
+        "instance_id": "workstation-a",
+        "root": "/absolute/path/to/selected/codex/sessions",
+        "projects": [
+          {
+            "project_id": "project-a",
+            "cwd_allowlist": ["/absolute/path/to/project-a"]
+          }
+        ]
+      }
+    ]
+  },
+  "api": {
+    "enabled": false,
+    "host": "127.0.0.1",
+    "port": 8766,
+    "clients": [
+      {
+        "id": "agent-stats",
+        "views": ["metadata"],
+        "token_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      {
+        "id": "agent-knowledge",
+        "views": ["content"],
+        "token_sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    ]
+  }
+}

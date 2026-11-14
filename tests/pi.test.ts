@@ -127,6 +127,16 @@ test('pi metadata hides message bodies while content keeps the original entry', 
   assert.equal(body.find(event => event.kind === 'message.user')!.body!.text, 'Hello\nworld');
 });
 
+test('pi sessions without a session_info name fall back to the first prompt', t => {
+  const text = fixture().split('\n')
+    .filter(line => line && !line.includes('"session_info"'))
+    .join('\n') + '\n';
+  const { filename, archive } = setup(t, text);
+  archive.importFile(filename, 'device-a', 'demo');
+  const start = archive.exportBatch(0, 100).events.find(event => event.kind === 'session.started')!;
+  assert.equal(start.data.title, 'Hello world');
+});
+
 test('pi fork header keeps the parent identity and start time', t => {
   const text = fixture('/home/user/.pi/agent/sessions/--tmp--/2026-01-01T09-00-00-000Z_parent-session.jsonl');
   const { filename, archive } = setup(t, text);

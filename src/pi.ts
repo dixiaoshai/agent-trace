@@ -149,7 +149,16 @@ function sessionTitle(records: SourceRecord[]): string | null {
     if (row.type !== 'session_info') continue;
     if (typeof row.name === 'string' && row.name.trim()) name = row.name;
   }
-  return name === null ? null : title(name);
+  if (name !== null) return title(name);
+  // Unnamed sessions display like pi's own selector: the first user prompt.
+  for (const { row } of records) {
+    if (row.type !== 'message') continue;
+    const message = object(row.message);
+    if (message?.role !== 'user') continue;
+    const prompt = title(message.content);
+    if (prompt !== null) return prompt;
+  }
+  return null;
 }
 
 export function normalize(

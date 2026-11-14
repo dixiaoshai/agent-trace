@@ -192,9 +192,10 @@ understand cumulative deltas still see the same per-request usage. Pi `/fork`
 and `/clone` copy entries verbatim; the header keeps the original entry
 timestamps and names the source in `parentSession`. The adapter records that id
 as `forked_from_session_id`, and consumers skip entries older than the new
-header timestamp so inherited history is not billed twice. Pi records a session
-name only when `/name` (or `--name`) was used; it is exposed as
-`session.started.data.title`.
+header timestamp so inherited history is not billed twice. A session is named by
+`/name` (or `--name`) through `session_info`; an unnamed session falls back to
+the first readable user prompt, matching pi's own session selector. Both are
+exposed as `session.started.data.title` (single line, max 80 characters).
 
 ## Storage and deletion
 

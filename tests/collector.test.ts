@@ -310,3 +310,18 @@ test('checked-in service tokens are not required by the collector fixture', () =
   // Keeps support constants exercised without reading or printing any secret.
   assert.match(STATS_TOKEN_HASH, /^[0-9a-f]{64}$/);
 });
+
+test('collector attaches session names from the source metadata home', async t => {
+  const fixture = setup(t, 'all');
+  writeFileSync(path.join(fixture.logs, 'session_index.jsonl'),
+    JSON.stringify({ id: 'archive-demo-session', thread_name: 'Synthetic named session' }) + '\n');
+  const { archive, collector } = open(fixture);
+  t.after(() => archive.close());
+
+  const summary = await collector.scanOnce();
+  assert.equal(summary.imported, 11);
+  const start = archive.exportBatch(0, 100, 'metadata').events
+    .find(event => event.kind === 'session.started')!;
+  assert.equal(start.data.title, 'Synthetic named session');
+  assert.equal(start.body, null);
+});

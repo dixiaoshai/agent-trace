@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, readFileSync, readdirSync, lstatSync } from 'node
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { NORMALIZER_VERSION, normalize, parseRecords } from './codex.ts';
+import type { TitleLookup } from './titles.ts';
 import { ArchiveError, cursorOf, hash, identifier, object, viewOf, type ArchiveStatus, type Batch, type Event, type View } from './types.ts';
 
 const MAX_FILE_BYTES = 128 * 1024 * 1024;
@@ -53,7 +54,12 @@ export class Archive {
   }
   close(): void { this.db.close(); }
 
-  importFile(filename: string, instanceId: string, project: ProjectSelector): { imported: number; skipped: number; pending: boolean } {
+  importFile(
+    filename: string,
+    instanceId: string,
+    project: ProjectSelector,
+    titles?: TitleLookup,
+  ): { imported: number; skipped: number; pending: boolean } {
     identifier(instanceId, 'instance ID');
     if (typeof project === 'string') identifier(project, 'project ID');
     const absolutePath = path.resolve(filename);
@@ -68,14 +74,17 @@ export class Archive {
     if (!records.length) return { imported: 0, skipped: 0, pending };
     let projectId: string;
     if (typeof project === 'function') {
-      const meta = records.find(record => record.row.type === 'session_meta');
+      const metas = records.filter(record => record.row.type === 'session_meta');
       // Missing session identity is a malformed source, not a project mismatch;
       // keep it retryable as an error instead of silently baselining it.
-      if (!meta) throw new ArchiveError('MISSING_SESSION', 'A complete session_meta identity is required');
+      if (!metas.length) throw new ArchiveError('MISSING_SESSION', 'A complete session_meta identity is required');
+      // Match the final identity used by normalize() so project selection and
+      // event attribution see the same resume/subagent metadata.
+      const meta = metas[metas.length - 1]!;
       projectId = project(object(meta.row.payload)?.cwd);
       identifier(projectId, 'project ID');
     } else projectId = project;
-    const events = normalize(records, absolutePath, instanceId, projectId, this.captureMode);
+    const events = normalize(records, absolutePath, instanceId, projectId, this.captureMode, titles);
     const first = events[0]!;
     this.db.exec('BEGIN IMMEDIATE');
     try {

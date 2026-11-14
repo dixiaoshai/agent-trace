@@ -144,3 +144,62 @@ test('default database keeps legacy data accessible and explicit db overrides bo
   assert.notEqual(explicit.archive_id, canonicalId);
   assert.equal(run(['status', '--db', legacyPath]).archive_id, legacyId);
 });
+
+test('resumed and subagent rollouts archive under their final identity', t => {
+  const { dir, archive } = setup(t);
+  const filename = path.join(dir, 'resumed.jsonl');
+  const rows = [
+    { timestamp: '2026-02-01T00:00:00Z', type: 'session_meta', payload: { id: 'first-identity', cwd: '/synthetic/first' } },
+    { timestamp: '2026-02-01T00:00:01Z', type: 'event_msg', payload: { type: 'task_started', turn_id: 'turn-1' } },
+    { timestamp: '2026-02-01T00:00:02Z', type: 'session_meta', payload: { id: 'final-identity', cwd: '/synthetic/final' } },
+    { timestamp: '2026-02-01T00:00:03Z', type: 'turn_context', payload: { turn_id: 'turn-1', model: 'gpt-6.1-sol' } },
+    { timestamp: '2026-02-01T00:00:04Z', type: 'event_msg', payload: { type: 'token_count', turn_id: 'turn-1', info: { total_token_usage: { input_tokens: 10, output_tokens: 2, total_tokens: 12 } } } },
+    { timestamp: '2026-02-01T00:00:05Z', type: 'event_msg', payload: { type: 'task_complete', turn_id: 'turn-1' } },
+  ];
+  writeFileSync(filename, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+  const seen: unknown[] = [];
+  const project = (cwd: unknown): string => { seen.push(cwd); return 'final-project'; };
+  const imported = archive.importFile(filename, 'local', project);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0], '/synthetic/final');
+  const batch = archive.exportBatch(0, 100, 'metadata');
+  const starts = batch.events.filter(event => event.kind === 'session.started');
+  assert.equal(starts.length, 1);
+  assert.equal(starts[0]!.session_id, 'final-identity');
+  assert.equal(starts[0]!.project_id, 'final-project');
+  assert.equal(imported.imported, rows.length - 1);
+  assert.ok(batch.events.every(event => event.session_id === 'final-identity'));
+  // Re-reading the same file is stable: earlier identity markers are not events.
+  assert.equal(archive.importFile(filename, 'local', project).imported, 0);
+});
+
+test('session names decorate the archived start event without changing bytes', t => {
+  const { dir, archive } = setup(t);
+  archive.importFile(fixture, 'local', 'demo', id => id === 'archive-demo-session' ? '  Synthetic   session  ' : null);
+  const events = archive.exportBatch(0, 100, 'metadata').events;
+  const start = events.find(event => event.kind === 'session.started')!;
+  assert.equal(start.data.title, 'Synthetic session');
+  assert.equal(start.body, null);
+  assert.ok(events.every(event => event.body === null && event.raw === null));
+
+  const unnamed = path.join(dir, 'unnamed.jsonl');
+  writeFileSync(unnamed, JSON.stringify({
+    timestamp: '2026-02-02T00:00:00Z',
+    type: 'session_meta',
+    payload: { id: 'unnamed-session', cwd: '/synthetic/demo' },
+  }) + '\n');
+  archive.importFile(unnamed, 'local', 'demo', () => null);
+  const second = archive.exportBatch(0, 200, 'metadata').events
+    .find(event => event.session_id === 'unnamed-session' && event.kind === 'session.started')!;
+  assert.equal(second.data.title, null);
+});
+
+test('overlong session names are bounded before they reach consumers', t => {
+  const { dir, archive } = setup(t);
+  const filename = path.join(dir, 'long-name.jsonl');
+  copyFileSync(fixture, filename);
+  archive.importFile(filename, 'local', 'demo', () => 'y'.repeat(120));
+  const start = archive.exportBatch(0, 100, 'metadata').events.find(event => event.kind === 'session.started')!;
+  assert.equal(Array.from(start.data.title as string).length, 80);
+  assert.ok((start.data.title as string).endsWith('…'));
+});

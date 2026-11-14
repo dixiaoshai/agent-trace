@@ -98,13 +98,22 @@ adapters may use native IDs instead of ordinal positions. Event identity must no
 depend on the normalizer version. Unknown records remain `source.unknown` with
 their original native type and raw payload when captured.
 
+A Codex rollout can contain more than one `session_meta`: resuming a conversation
+appends the new identity, and subagent rollouts repeat the parent identity after
+their own. The final record is authoritative; the whole file is archived under
+that `session_id` and project, and earlier identity markers are not emitted.
+This matches the direct-log reader's attribution and keeps tokens with one
+session. Session `title` is optional display metadata read from the source's
+`session_index.jsonl` / newest readable `state_*.sqlite`; it never changes event
+identity, privacy guarantees or cursor semantics.
+
 ## Normalized kinds and allowlisted data
 
 All ordinary events include nullable `turn_id`, `root_turn_id`, and `model`.
 
 | Kind | Additional metadata data | Content body |
 |---|---|---|
-| `session.started` | `cwd`, `parent_session_id`, `forked_from_session_id`, `created_at`, `cli_version` | null |
+| `session.started` | `cwd`, `parent_session_id`, `forked_from_session_id`, `created_at`, `cli_version`, optional `title` (single line, max 80 characters, read beside the source) | null |
 | `turn.context` | no additional fields | null |
 | `turn.started` | no additional fields | null |
 | `turn.completed` | no additional fields | optional text |

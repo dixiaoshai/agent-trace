@@ -1,3 +1,4 @@
+import type { TitleLookup } from './titles.ts';
 import { ArchiveError, hash, identifier, object, timestamp, type Event, type JsonObject, type View } from './types.ts';
 
 export const NORMALIZER_VERSION = 'codex-v1';
@@ -39,14 +40,32 @@ export function parseRecords(input: string): { records: SourceRecord[]; pending:
   return { records, pending: tail.length > 0 };
 }
 
-export function normalize(records: SourceRecord[], sourcePath: string, instance: string, project: string, mode: View): Event[] {
+export function normalize(
+  records: SourceRecord[],
+  sourcePath: string,
+  instance: string,
+  project: string,
+  mode: View,
+  titles?: TitleLookup,
+): Event[] {
   const metas = records.filter(r => r.row.type === 'session_meta');
   if (!metas.length) throw new ArchiveError('MISSING_SESSION', 'A complete session_meta identity is required');
-  const sessionId = identifier(object(metas[0]!.row.payload)!.id ?? object(metas[0]!.row.payload)!.session_id, 'session ID');
-  if (metas.some(r => (object(r.row.payload)!.id ?? object(r.row.payload)!.session_id) !== sessionId)) throw new ArchiveError('SOURCE_CONFLICT', 'Multiple session identities in one log');
+  // Codex appends another session_meta when a conversation is resumed, and
+  // subagent rollouts repeat the parent identity after their own. The last
+  // record is the identity the rollout finally belongs to, which is also what
+  // the direct-import reader uses. Earlier identity records are resume markers,
+  // not separate sessions; the rows they cover stay attributed to the final
+  // identity so tokens never move between projects or duplicate a session.
+  const finalMeta = metas[metas.length - 1]!;
+  const sessionId = identifier(
+    object(finalMeta.row.payload)!.id ?? object(finalMeta.row.payload)!.session_id,
+    'session ID',
+  );
   const sessionKey = JSON.stringify(['codex', instance, sessionId]);
+  const sessionTitle = title(titles?.(sessionId));
   const observedAt = new Date().toISOString();
-  return records.map(({ row, line, record_hash }) => {
+  const selected = metas.length === 1 ? records : records.filter(record => record.row.type !== 'session_meta' || record === finalMeta);
+  return selected.map(({ row, line, record_hash }) => {
     const p = object(row.payload)!;
     const data: JsonObject = {
       turn_id: typeof p.turn_id === 'string' ? p.turn_id : null,
@@ -65,6 +84,7 @@ export function normalize(records: SourceRecord[], sourcePath: string, instance:
         forked_from_session_id: typeof p.forked_from_id === 'string' ? p.forked_from_id : null,
         created_at: timestamp(p.timestamp) ?? timestamp(row.timestamp),
         cli_version: typeof p.cli_version === 'string' ? p.cli_version : null,
+        title: sessionTitle,
       });
     } else if (row.type === 'turn_context') kind = 'turn.context';
     else if (row.type === 'event_msg') {

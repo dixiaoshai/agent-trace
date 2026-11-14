@@ -2,7 +2,7 @@
 
 更新日期：2026-11-14。以下先使用合成示例；真实来源只在明确选定后导入。
 
-本文命令均针对当前手动流程。P0 已固定并实现服务配置校验（`config-check`）及本机 API/follow 契约；常驻 `serve`、HTTP 服务端和消费方 `follow` 尚未实现。下一阶段已确定不用 hook，由两个消费方主动拉取，见[服务配置](service-config.md)、[本机 API](local-api.md)、[消费方 follow 约定](consumer-follow.md)、[设计](continuous-collection.md)和 [TODO](../../TODO.md)。
+本文命令针对当前手动流程与 P1 Trace 服务。P0 已固定并实现服务配置校验（`config-check`）及本机 API/follow 契约；P1 已实现前台 `serve`、常驻扫描和只读事件 API。消费方 `follow` 仍未实现（P2），Stats/Knowledge 目前仍用文件批次或自己的脚本调用 API。见[服务配置](service-config.md)、[本机 API](local-api.md)、[消费方 follow 约定](consumer-follow.md)、[设计](continuous-collection.md)和 [TODO](../../TODO.md)。
 
 ## 环境与安装
 
@@ -96,18 +96,44 @@ node src/cli.ts export --db .agent-trace/demo.sqlite --after 11 --view metadata 
 
 没有新事件时返回空页与当前游标，属于正常结果。消费失败时不要提前记下导出的 `next_cursor`；只采用消费成功回执。回执丢失可以重试原成功页，消费者会返回已提交的当前游标。
 
-目前没有自动循环或订阅功能；`status` 只显示归档概况，不负责拉取来源或消费方进度。
+目前 Trace 的 `serve` 可以自动扫描并归档新事件；两个消费方还没有自动 `follow` worker。上面的手动导出/导入仍是端到端验证与离线恢复手段，不会因为 Trace 常驻而被调用。
 
-## 校验常驻服务配置（尚未启动）
+## 启动常驻采集与只读 API（P1）
 
-P0 只提供配置校验，不创建数据库、不扫描来源、不监听端口：
+先校验配置；`config-check` 不建库、不扫描、不监听：
 
 ```sh
 node src/cli.ts config-check --config agent-trace.service.example.json
 node src/cli.ts config-check --config path/to/service.json --db path/to/trace.sqlite
 ```
 
-示例默认关闭采集与 API。正式启用前按[服务配置](service-config.md)替换来源、项目 `cwd_allowlist`、数据库、捕获模式和 token 摘要；`config-check` 通过不代表目录存在或数据库捕获模式匹配。`serve` 尚未实现，不要据此启动常驻任务。
+示例默认关闭采集与 API。正式启用前按[服务配置](service-config.md)替换来源、项目 `cwd_allowlist`、数据库、捕获模式和 token 摘要；`config-check` 通过不代表目录存在或数据库捕获模式匹配，`serve` 启动时会再检查并获取采集租约。
+
+前台启动：
+
+```sh
+node src/cli.ts serve --config path/to/service.json
+```
+
+- `collection.enabled=true` 时按 `scan_interval_seconds` 扫描配置来源；`backfill=none` 首次只记录基线，`all` 首次导入当前文件。
+- `api.enabled=true` 时只监听配置的回环地址/端口。API 请求必须带配置中某个客户端的 bearer token；Stats 通常只授权 `metadata`，Knowledge 只授权 `content`。
+- 启动、每次扫描、采集错误和停止输出 NDJSON 到 stdout；不会输出 token、正文或原始事件。
+- `Ctrl+C`/SIGTERM 优雅停止：不再调度新扫描，等待当前文件事务结束，关闭监听并释放租约。
+- 同一归档只能有一个采集实例；第二个进程报 `COLLECTION_LOCKED`。租约默认 5 分钟，崩溃后过期可接管。
+- 采集和 API 都关闭时 `serve` 拒绝启动；只读已有归档可设 `collection.enabled=false`。
+
+用本机 API 核对（token 放在消费方自己的环境变量，不要写进命令历史或日志）：
+
+```sh
+curl -sS -H "Authorization: Bearer $AGENT_TRACE_STATS_TOKEN" \
+  "http://127.0.0.1:8766/v1/status"
+curl -sS -H "Authorization: Bearer $AGENT_TRACE_STATS_TOKEN" \
+  "http://127.0.0.1:8766/v1/events?after=0&limit=500&view=metadata"
+```
+
+`GET` 幂等且不推进任何进度。`has_more=true` 时用返回的 `next_cursor` 继续取；`metadata` 不包含正文/原始对象。不要用一个消费方的游标代替另一个消费方的进度。
+
+协议错误、非法游标、越权视图和超过 32 MiB 的页会返回明确错误，不返回空页伪装成追平。消费方 `follow` worker 尚未实现，当前不要把它当成可启动命令。
 
 ## 读取归档本身的证据
 
@@ -152,6 +178,7 @@ node src/cli.ts delete-session --db .agent-trace/demo.sqlite --runtime codex --i
 | `CAPTURE_MODE` | 既有库的捕获模式与请求不同 | 核对原库模式；需要不同策略时使用独立试点库并规划消费方接入 |
 | `SOURCE_CONFLICT` | 同会话项目不同，或同一行身份的内容已变化 | 核对项目/实例和源文件是否重写；勿仅靠换实例绕过，以免重复统计 |
 | `SESSION_DELETED` | 同身份已显式删除 | 停止重导；确认是否需要另行规划恢复 |
+| `COLLECTION_LOCKED` | 同一归档已有采集进程持有有效租约 | 检查现有 `serve`；不要强抢运行中的租约，等它停止或租约过期 |
 | `INVALID_RECORD` | 完整行不是支持的 Codex JSON 记录 | 核对来源格式；该文件本次事件未提交 |
 | `pending` 非空 | 文件末尾尚无结束换行 | 等日志写完后再次导入 |
 | `FILE_TOO_LARGE` / `TOO_MANY_SOURCES` | 超过首版采集范围限制 | 缩小所选来源，保留原始事件顺序和身份 |

@@ -13,10 +13,11 @@ batch file exported by CLI, allowing Python and TypeScript consumers to share a
 versioned contract without sharing internal database schemas. The next transport
 is a read-only local HTTP feed pulled independently by each consumer. Its
 endpoint, authentication, view and error contract is fixed in [the local API
-document](local-api.md); the server and consumer workers are not implemented
-yet. Trace does not maintain destination registries, delivery queues or consumer
-acknowledgment state. See [the design](continuous-collection.md),
-[service configuration](service-config.md) and [implementation TODO](../../TODO.md).
+document](local-api.md); the server is implemented by `agent-trace serve` in
+P1, while the consumer workers are not implemented yet. Trace does not maintain
+destination registries, delivery queues or consumer acknowledgment state. See
+[the design](continuous-collection.md), [service configuration](service-config.md)
+and [implementation TODO](../../TODO.md).
 
 The archive requires explicit source paths, instance ID and project ID. It does
 not discover or import the user's history automatically. The database's capture
@@ -145,8 +146,9 @@ wall-clock ordering across independent runtimes is claimed.
 This first transport has no scope-filtered feed. Agent Knowledge must be authorized
 for every project present in an imported page or reject the entire transaction.
 Deploy a separate archive for a narrower collection scope; do not manually drop
-unauthorized events while retaining the global cursor. Server-side scoped feeds
-and authentication are future work. A parsed `raw` value cannot reproduce the
+unauthorized events while retaining the global cursor. The local HTTP feed already
+requires a loopback Host/Origin and a bearer token with explicit views; per-project
+filtered streams remain future work. A parsed `raw` value cannot reproduce the
 source line's whitespace/encoding, so consumers retain `record_hash` as the
 archive's source assertion, not an independently verified byte hash.
 

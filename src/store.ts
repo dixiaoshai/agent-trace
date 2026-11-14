@@ -3,9 +3,16 @@ import { chmodSync, mkdirSync, readFileSync, readdirSync, lstatSync } from 'node
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { NORMALIZER_VERSION, normalize, parseRecords } from './codex.ts';
-import { ArchiveError, cursorOf, hash, identifier, viewOf, type ArchiveStatus, type Batch, type Event, type View } from './types.ts';
+import { ArchiveError, cursorOf, hash, identifier, object, viewOf, type ArchiveStatus, type Batch, type Event, type View } from './types.ts';
 
 const MAX_FILE_BYTES = 128 * 1024 * 1024;
+
+/**
+ * The CLI passes a fixed project. The scanner passes a resolver so the project
+ * is selected from the session metadata inside the same parsed snapshot that is
+ * about to be archived; the file is never read twice for identity/matching.
+ */
+export type ProjectSelector = string | ((cwd: unknown) => string);
 export class Archive {
   db: DatabaseSync;
   archiveId: string;
@@ -46,8 +53,9 @@ export class Archive {
   }
   close(): void { this.db.close(); }
 
-  importFile(filename: string, instanceId: string, projectId: string): { imported: number; skipped: number; pending: boolean } {
-    identifier(instanceId, 'instance ID'); identifier(projectId, 'project ID');
+  importFile(filename: string, instanceId: string, project: ProjectSelector): { imported: number; skipped: number; pending: boolean } {
+    identifier(instanceId, 'instance ID');
+    if (typeof project === 'string') identifier(project, 'project ID');
     const absolutePath = path.resolve(filename);
     const stat = lstatSync(absolutePath);
     if (!stat.isFile() || stat.isSymbolicLink()) throw new ArchiveError('INVALID_SOURCE', 'Source must be a regular file, not a symlink');
@@ -58,6 +66,15 @@ export class Archive {
     const input = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
     const { records, pending } = parseRecords(input);
     if (!records.length) return { imported: 0, skipped: 0, pending };
+    let projectId: string;
+    if (typeof project === 'function') {
+      const meta = records.find(record => record.row.type === 'session_meta');
+      // Missing session identity is a malformed source, not a project mismatch;
+      // keep it retryable as an error instead of silently baselining it.
+      if (!meta) throw new ArchiveError('MISSING_SESSION', 'A complete session_meta identity is required');
+      projectId = project(object(meta.row.payload)?.cwd);
+      identifier(projectId, 'project ID');
+    } else projectId = project;
     const events = normalize(records, absolutePath, instanceId, projectId, this.captureMode);
     const first = events[0]!;
     this.db.exec('BEGIN IMMEDIATE');

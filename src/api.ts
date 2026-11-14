@@ -3,10 +3,9 @@ import type { ApiClientConfig, LoopbackHost } from './config.ts';
 import { ArchiveError, type Batch, type View } from './types.ts';
 
 /**
- * Fixed local HTTP contract for the read-only event feed. The server is
- * implemented in the next stage; request parsing, authorization, error mapping
- * and the status envelope are defined here so consumers and the server share
- * one versioned contract.
+ * Fixed local HTTP contract for the read-only event feed. Request parsing,
+ * authorization, error mapping and the status envelope are defined here so the
+ * server (P1) and consumers share one versioned contract.
  */
 export const API_SCHEMA_VERSION = 1;
 export const API_PREFIX = '/v1';

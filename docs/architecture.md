@@ -1,8 +1,8 @@
 # 架构说明
 
-状态：Codex 首版本地实现；常驻采集与主动拉取处于 P0 契约阶段。更新日期：2026-11-14。
+状态：Codex 首版本地实现；P1 Trace 常驻采集与本机只读 API 已实现，消费方 follow worker 仍属 P2。更新日期：2026-11-14。
 
-本文描述已实现的文件批次链路。下一阶段的[无 hook 常驻采集与消费方主动拉取](continuous-collection.md)方案已确认，P0 已实现[服务配置](service-config.md)校验、[本机只读 API](local-api.md)契约和[消费方 follow 约定](consumer-follow.md)，但 `serve`、HTTP 服务端和 follow worker 尚未实现。同步状态留在各消费方，Trace 不负责向 Stats/Knowledge 推送。实施清单见 [TODO](../../TODO.md)。
+本文描述已实现的文件批次链路和 P1 Trace 服务。下一阶段的[无 hook 常驻采集与消费方主动拉取](continuous-collection.md)方案已确认：P0 固定[服务配置](service-config.md)、[本机只读 API](local-api.md)契约和[消费方 follow 约定](consumer-follow.md)，P1 实现 `serve`、扫描调度、租约和 HTTP 服务端；`follow` worker 尚未实现。同步状态留在各消费方，Trace 不负责向 Stats/Knowledge 推送。实施清单见 [TODO](../../TODO.md)。
 
 ## 项目职责与数据方向
 
@@ -22,11 +22,11 @@ flowchart TD
     KS --> Q[CLI / 只读 MCP 检索与来源读取]
 ```
 
-图中的箭头目前由 CLI 导出和导入 JSON 文件完成。没有后台推送、定时任务或自动从 agent 运行时截获事件。`config-check` 只校验常驻服务配置，不启动采集；HTTP 与 follow 仍未实现。Inspector 是独立查看工具，尚未与本模块集成。
+图中的箭头目前由 CLI 导出/导入 JSON 文件，或由消费方自己的脚本调用 Trace 本机分页 API 完成。P1 的 `serve` 可以独立采集并提供 API，但不会推送或调用下游；Stats/Knowledge 的自动 follow worker 尚未实现。`config-check` 只校验常驻服务配置，不启动采集。Inspector 是独立查看工具，尚未与本模块集成。
 
 | 项目 | 拥有的数据与规则 | 对外入口 |
 | --- | --- | --- |
-| Agent Trace | 捕获策略、来源、事件身份、事件证据、统一序列、删除标记 | `ingest/export/read/delete-session/status/config-check` |
+| Agent Trace | 捕获策略、来源、事件身份、事件证据、统一序列、删除标记 | `ingest/export/read/delete-session/status/config-check/serve` |
 | Agent Stats | 用量归因、费用估算、工具统计、独立消费进度 | `import-archive`、原有看板和查询 |
 | Agent Knowledge | 已授权的归档证据投影、检索、来源读取、独立消费进度 | `archive-import/archive-search/archive-read`、只读 MCP |
 
@@ -42,6 +42,9 @@ flowchart TD
 | 来源与归档存储 | [src/store.ts](../src/store.ts) | 显式路径发现、来源大小检查、事务写入、去重、分页、高水位、读取与删除 |
 | 服务配置 | [src/config.ts](../src/config.ts) | 严格配置校验、相对路径解析、项目/cwd 匹配、默认库兼容 |
 | 本机 API 契约 | [src/api.ts](../src/api.ts) | 查询与授权校验、错误映射、状态信封、页大小边界 |
+| 收集调度 | [src/collector.ts](../src/collector.ts) | 来源发现、项目/cwd 匹配、基线/变化文件重读、单实例租约/心跳、扫描状态 |
+| 本机 API 服务端 | [src/server.ts](../src/server.ts) | 回环监听、路由、认证/视图校验、复用 `exportBatch`、二进制页上限 |
+| 服务编排 | [src/service.ts](../src/service.ts) | 采集与 API 生命周期、启动/扫描/停止事件、优雅关闭 |
 | 跨项目验收 | [scripts/verify-consumers.ts](../scripts/verify-consumers.ts) | 用合成数据调用真实的两侧 CLI |
 | 统计消费方 | [agent_stats/archive.py](../../agent-stats/agent_stats/archive.py) | 批次校验、事务游标、统计重建与删除传播 |
 | 证据消费方 | [src/archive/index.ts](../../agent-knowledge/src/archive/index.ts) | 事务导入、owner/project 范围、证据搜索和读取 |
@@ -67,6 +70,7 @@ flowchart TD
 | `metadata` | 持久的 `archive_id`、捕获模式、标准化版本 |
 | `sessions` | 运行时/实例/原生会话身份、固定项目归属和删除状态 |
 | `events` | 自增序列、唯一事件 ID、来源哈希与事件负载 |
+| `collection_lease/sources/files` | 单实例租约、来源基线/健康状态、文件扫描检查点（不改变事件协议） |
 
 一个文件的事件在同一写事务内提交；CLI 一次选择多个文件时，每个文件独立提交。正常导入是追加式写入，显式删除是清除证据并追加删除标记的例外。文件使用本机私有权限；不提供多用户认证。
 
@@ -80,7 +84,7 @@ Agent Stats 的消费表放在其现有统计库内。Agent Knowledge 的归档�
 - 每个消费方按 `archive_id` 保存自己的游标，并将事件处理结果和游标原子提交。完整旧页允许重试，跳页和向前延伸的重叠页拒绝。
 - 删除标记有专用确定性 ID。消费方校验身份后清除对应投影并记录删除状态，旧页合法重试不会恢复已删除数据。
 
-事件字段及边界以 [v1 协议](protocol.md) 为准。具体时序见[执行流程](workflow.md)。
+事件字段及边界以 [v1 协议](protocol.md) 为准。具体时序见[执行流程](workflow.md)。P1 的扫描检查点按来源文件身份记录：导入成功的检查点只在该文件归档事务提交后写入；`backfill=none` 基线和不匹配项目是显式的无导入决策，记录文件版本与项目范围指纹，配置修正后会重试。崩溃后允许整文件重读，不会因检查点提前而漏事件。单归档采集租约存在 `collection_lease`，第二个采集实例会被拒绝，过期租约可接管。
 
 ## 捕获与访问边界
 

@@ -1,6 +1,6 @@
 # 消费方 follow 约定
 
-状态：P0 已固定命令名、配置键、状态输出和错误分类；两个消费方的 worker 尚未实现（P2）。更新日期：2026-11-14。
+状态：P0 已固定命令名、配置键、状态输出和错误分类；Trace `serve` 与只读 API 已在 P1 实现，两个消费方的 worker 尚未实现（P2）。更新日期：2026-11-14。
 
 本约定适用于 Agent Stats 与 Agent Knowledge 各自独立实现的同步 worker。Trace 只提供[只读事件 API](local-api.md)，不保存消费方列表、投递队列或确认游标，也不调用消费方命令。消费进度只在消费方自己的数据库中维护。
 
@@ -12,7 +12,7 @@
 | Agent Stats | `agent-stats follow --config PATH [--db PATH]` | 本文 `agent-stats.follow.json` | `metadata` |
 | Agent Knowledge | `agent-knowledge follow --config PATH` | 本文 `agent-knowledge.follow.json` | `content` |
 
-- 三个进程独立前台运行，谁先启动都可以；Trace 不等待消费方，消费方不需要看板或 MCP 客户端保持连接。
+- 三个进程独立前台运行，谁先启动都可以；Trace 不等待消费方，消费方不需要看板或 MCP 客户端保持连接。当前只有 Trace 进程可按本文启动；两个 `follow` 命令仍是 P2 契约。
 - Stats 的 `follow` 与看板 `serve` 可分别启停；Knowledge 的 `follow` 与 `serve`（stdio MCP）可分别启停。关闭 MCP 不得停止拉取，关闭看板不得停止 Stats 拉取。
 - `follow` 是独立的 Trace 消费模式。不能在 `follow` 中直读 Codex 日志，也不能把 Stats 现有 `--no-import` 当作完整的 Trace 模式。
 - 前台运行，`Ctrl+C`（SIGINT）或 SIGTERM 触发优雅停止：不再取新页，等待当前本地事务结束，释放租约，输出 `follow.stopped` 后退出。不得在事务中途强制退出。

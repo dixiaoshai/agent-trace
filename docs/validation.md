@@ -67,4 +67,36 @@
 - 错误映射、`/v1/status` 信封（归档身份、高水位、采集健康）以及不泄露 token/正文。
 - `config-check` 不创建数据库、不回显 token 摘要，示例配置保持可加载且默认关闭采集与 API。
 
-明确未验证：没有实现或启动 `serve`、HTTP 监听、扫描调度、运行锁/心跳、真实网络请求或消费方 `follow` worker；没有读取真实 Codex 历史，没有启用采集或修改全局配置。P0 契约尚未经过未参与实现的 reviewer 独立审查。
+P0 当时明确未验证（P1 已补齐，见下节）：没有实现或启动 `serve`、HTTP 监听、扫描调度、运行锁/心跳、真实网络请求或消费方 `follow` worker；没有读取真实 Codex 历史，没有启用采集或修改全局配置。P0 契约尚未经过未参与实现的 reviewer 独立审查。
+
+## P1 Trace 常驻采集与 API（2026-11-14）
+
+实际执行：
+
+| 范围 | 命令 | 结果 |
+| --- | --- | --- |
+| Agent Trace | `npm run check` | 类型检查、32 项测试和 JavaScript 构建通过 |
+| 构建入口 | `node dist/cli.js help` | 成功列出 `serve --config PATH [--db PATH]` |
+| 跨项目批次回归 | `npm run verify:consumers` | 通过；使用临时库与合成日志，仍验证独立分页、幂等、正文隔离和删除传播 |
+| 示例配置 | `node src/cli.ts config-check --config agent-trace.service.example.json` | 通过；仍不建库、不扫描、不监听 |
+
+新增测试覆盖：
+
+- `backfill=none` 首次只记录基线，追加后整文件重读并导入；`backfill=all` 首次导入。
+- 归档前按 `session_meta.cwd` 匹配项目；未匹配文件跳过并计数，配置修正后同一来源重新尝试。
+- 半行等待、完整坏行回滚、同位置内容重写冲突、文件移动/复制去重、超大来源文件报错、删除会话不被扫描复活。
+- 单个来源不可用或文件出错时，其他来源继续扫描；状态记录来源错误并进入 `degraded`。
+- 单归档租约竞争拒绝第二实例、过期接管、续租失败检测和任务不重入。
+- `GET /v1/events` 复用 `exportBatch`：分页、视图授权、metadata 无正文、重复 GET 不改变高水位或消费进度；非法游标/参数、Host/Origin、未知路径、非 GET 和 32 MiB 页上限返回明确错误。
+- `GET /v1/status` 返回归档身份、高水位、采集状态、心跳、最近扫描和来源健康，不泄露 token/正文。
+- API-only 服务不获取采集租约、`scan_interval_seconds=null`，并拒绝扫描；采集与 API 都关闭时拒绝启动。
+- CLI `serve` 收到 SIGTERM 后正常退出、输出 `serve.stopped`，并释放租约；结束后可用新连接重新获取租约。
+- 服务事件为 NDJSON，只包含身份、状态、计数、错误代码和时间，不含 token、正文或原始对象。
+
+明确未验证：
+
+- 没有读取用户真实 Codex 历史，没有启动真实长期采集或修改全局 Codex 配置。
+- 没有运行 Stats `follow`、Knowledge `follow`、MCP 离线同步、看板并发读取或断网/超时/双机矩阵；这些属于 P2/P3。
+- 网络测试只使用 `127.0.0.1` 回环和合成日志；没有验证非回环部署、浏览器前端或大规模日志吞吐。
+- 5 分钟采集租约用于避免长文件导入期间被误接管，但未做长时间运行和强制崩溃恢复实测。
+- P1 尚未由未参与实现的 reviewer 独立审查。

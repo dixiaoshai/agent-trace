@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node:
+    name: Node 24.15.0
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.15.0"
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Type check, tests and build
+        run: npm run check
+
+  sensitive:
+    name: Sensitive data scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Scan tracked files
+        run: python3 scripts/check_sensitive.py
+
+  # Single required check for branch protection; keeps job names out of the rule.
+  ci-success:
+    name: CI success
+    if: always()
+    needs: [node, sensitive]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Verify all jobs passed
+        run: |
+          if [ "${{ needs.node.result }}" != "success" ] || [ "${{ needs.sensitive.result }}" != "success" ]; then
+            echo "node=${{ needs.node.result }} sensitive=${{ needs.sensitive.result }}"
+            exit 1
+          fi

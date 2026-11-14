@@ -203,3 +203,50 @@ test('overlong session names are bounded before they reach consumers', t => {
   assert.equal(Array.from(start.data.title as string).length, 80);
   assert.ok((start.data.title as string).endsWith('…'));
 });
+
+test('folded rollouts keep distinct event identities and still deduplicate copies', t => {
+  const { dir, archive } = setup(t);
+  const parent = path.join(dir, 'parent.jsonl');
+  const child = path.join(dir, 'child.jsonl');
+  const record = (id: string, kind: string, payload: Record<string, unknown> = {}): string => JSON.stringify({
+    timestamp: '2026-03-01T00:00:00Z',
+    type: kind,
+    payload: { turn_id: 'turn-1', ...payload, ...(kind === 'session_meta' ? { id, cwd: '/synthetic/folded' } : {}) },
+  });
+  writeFileSync(parent, [
+    record('parent-session', 'session_meta'),
+    record('', 'event_msg', { type: 'task_started' }),
+    record('', 'event_msg', { type: 'token_count', info: { total_token_usage: { input_tokens: 100, output_tokens: 10, total_tokens: 110 } } }),
+  ].join('\n') + '\n');
+  // Subagent rollout: its own identity first, the parent identity last.
+  writeFileSync(child, [
+    record('child-session', 'session_meta'),
+    record('parent-session', 'session_meta'),
+    record('', 'event_msg', { type: 'task_started' }),
+    record('', 'event_msg', { type: 'token_count', info: { total_token_usage: { input_tokens: 7, output_tokens: 3, total_tokens: 10 } } }),
+  ].join('\n') + '\n');
+
+  const parentReport = archive.importFile(parent, 'local', 'demo');
+  const childReport = archive.importFile(child, 'local', 'demo');
+  assert.equal(parentReport.imported, 3);
+  assert.equal(childReport.imported, 3);
+  const batch = archive.exportBatch(0, 100, 'metadata');
+  assert.equal(batch.events.length, 6);
+  assert.equal(new Set(batch.events.map(event => event.event_id)).size, 6);
+  assert.ok(batch.events.every(event => event.session_id === 'parent-session'));
+
+  // A copied child rollout is the same evidence even though its path changed.
+  const copy = path.join(dir, 'child-copy.jsonl');
+  copyFileSync(child, copy);
+  assert.equal(archive.importFile(copy, 'local', 'demo').imported, 0);
+  assert.equal(archive.exportBatch(0, 100, 'metadata').events.length, 6);
+});
+
+test('single-identity logs keep the published v1 event identifier', t => {
+  const { archive } = setup(t);
+  archive.importFile(fixture, 'local', 'demo');
+  const events = archive.exportBatch(0, 100, 'metadata').events;
+  const line = 1;
+  const expected = hash(JSON.stringify(['codex', 'local', 'archive-demo-session', line]));
+  assert.ok(events.some(event => event.event_id === expected));
+});

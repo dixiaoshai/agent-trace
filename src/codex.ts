@@ -61,6 +61,15 @@ export function normalize(
     object(finalMeta.row.payload)!.id ?? object(finalMeta.row.payload)!.session_id,
     'session ID',
   );
+  // A file folded into a shared session still needs a stable per-file
+  // discriminator: two rollouts of the same session reuse line numbers but hold
+  // different records, so (session, line) alone would collide. The first
+  // identity is stable inside the file and moves with it. Single-identity logs
+  // keep the plain v1 tuple, so their identifiers never change.
+  const firstIdentity = object(metas[0]!.row.payload)!.id ?? object(metas[0]!.row.payload)!.session_id;
+  const series = typeof firstIdentity === 'string' && firstIdentity && firstIdentity !== sessionId
+    ? identifier(firstIdentity, 'session ID')
+    : null;
   const sessionKey = JSON.stringify(['codex', instance, sessionId]);
   const sessionTitle = title(titles?.(sessionId));
   const observedAt = new Date().toISOString();
@@ -124,7 +133,9 @@ export function normalize(
       }
     } else if (row.type === 'compacted') { kind = 'context.compacted'; body = { text: text(p.message ?? p.summary) }; }
     return {
-      schema_version: 1, event_id: hash(JSON.stringify(['codex', instance, sessionId, line])), archive_seq: 0,
+      schema_version: 1,
+      event_id: hash(JSON.stringify(['codex', instance, sessionId, ...(series ? [series] : []), line])),
+      archive_seq: 0,
       runtime: 'codex', instance_id: instance, session_id: sessionId, session_key: sessionKey, project_id: project,
       kind, occurred_at: timestamp(row.timestamp), observed_at: observedAt,
       native_type: row.type + (subtype ? '.' + subtype : ''), source: { path: sourcePath, line, record_hash }, data,

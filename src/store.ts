@@ -4,7 +4,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { NORMALIZER_VERSION, normalize, parseRecords } from './codex.ts';
 import type { TitleLookup } from './titles.ts';
-import { ArchiveError, cursorOf, hash, identifier, object, viewOf, type ArchiveStatus, type Batch, type Event, type View } from './types.ts';
+import { ArchiveError, cursorOf, hash, identifier, object, timestamp, viewOf, type ArchiveStatus, type Batch, type Event, type View } from './types.ts';
 
 const MAX_FILE_BYTES = 128 * 1024 * 1024;
 
@@ -37,6 +37,10 @@ export class Archive {
           session_key TEXT NOT NULL REFERENCES sessions(session_key), record_hash TEXT NOT NULL, payload TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS events_session ON events(session_key);
+        CREATE TABLE IF NOT EXISTS session_revisions (
+          session_key TEXT PRIMARY KEY, revision_at TEXT NOT NULL, event_count INTEGER NOT NULL,
+          source_path TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
         PRAGMA user_version=1;
       `);
       this.db.exec('BEGIN IMMEDIATE');
@@ -86,27 +90,64 @@ export class Archive {
     } else projectId = project;
     const events = normalize(records, absolutePath, instanceId, projectId, this.captureMode, titles);
     const first = events[0]!;
+    // Codex can leave several files for one session identity (resumed or
+    // subagent rollouts) and can rewrite a rollout in place. Like the direct
+    // importer, keep the newest revision: the greatest last event timestamp,
+    // then the greatest row count. Older or identical revisions are skipped, so
+    // copies stay idempotent and cumulative usage is never merged across
+    // revisions.
+    const revisionAt = records.reduce((max, record) => {
+      const stamp = timestamp(record.row.timestamp) ?? '';
+      return stamp > max ? stamp : max;
+    }, '');
+    const rank = { revision_at: revisionAt, event_count: records.length };
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const session = this.db.prepare('SELECT project_id,deleted FROM sessions WHERE session_key=?').get(first.session_key);
       if (session?.deleted) throw new ArchiveError('SESSION_DELETED', 'Deleted session cannot be silently reimported');
       if (session && session.project_id !== projectId) throw new ArchiveError('SOURCE_CONFLICT', 'Existing session belongs to another project');
+      const stored = this.db.prepare('SELECT revision_at,event_count FROM session_revisions WHERE session_key=?')
+        .get(first.session_key);
+      const current = stored
+        ? { revision_at: String(stored.revision_at), event_count: Number(stored.event_count) }
+        : null;
+      // Equal revisions are reconciled (an in-place rewrite replaces changed
+      // lines and leaves identical ones untouched); older revisions are ignored.
+      const apply = !current
+        || rank.revision_at > current.revision_at
+        || (rank.revision_at === current.revision_at && rank.event_count >= current.event_count);
+      if (!apply) {
+        this.db.exec('COMMIT');
+        return { imported: 0, skipped: events.length, pending };
+      }
       this.db.prepare('INSERT OR IGNORE INTO sessions(session_key,runtime,instance_id,session_id,project_id) VALUES(?,?,?,?,?)')
         .run(first.session_key, first.runtime, instanceId, first.session_id, projectId);
+      const existing = new Map(
+        this.db.prepare('SELECT event_id,record_hash FROM events WHERE session_key=?').all(first.session_key)
+          .map(row => [String(row.event_id), String(row.record_hash)]),
+      );
+      const incoming = new Map(events.map(event => [event.event_id, event]));
+      const remove = this.db.prepare('DELETE FROM events WHERE event_id=?');
+      const add = this.db.prepare('INSERT INTO events(event_id,session_key,record_hash,payload) VALUES(?,?,?,?)');
       let imported = 0;
       let skipped = 0;
-      const find = this.db.prepare('SELECT record_hash FROM events WHERE event_id=?');
-      const add = this.db.prepare('INSERT INTO events(event_id,session_key,record_hash,payload) VALUES(?,?,?,?)');
-      for (const event of events) {
-        const recordHash = event.source!.record_hash;
-        const existing = find.get(event.event_id);
-        if (existing) {
-          if (existing.record_hash !== recordHash) throw new ArchiveError('SOURCE_CONFLICT', 'Existing source record changed; no events from this file were imported');
-          skipped++;
-        } else {
-          add.run(event.event_id, event.session_key, recordHash, JSON.stringify(event)); imported++;
-        }
+      // A different winning rollout replaces the previous revision entirely;
+      // otherwise unchanged lines keep their identity and sequence position.
+      for (const [eventId, recordHash] of existing) {
+        const next = incoming.get(eventId);
+        if (!next || next.source!.record_hash !== recordHash) remove.run(eventId);
       }
+      for (const event of events) {
+        const prior = existing.get(event.event_id);
+        if (prior !== undefined && prior === event.source!.record_hash) { skipped++; continue; }
+        add.run(event.event_id, event.session_key, event.source!.record_hash, JSON.stringify(event));
+        imported++;
+      }
+      this.db.prepare(`INSERT INTO session_revisions(session_key,revision_at,event_count,source_path,updated_at)
+        VALUES(?,?,?,?,?)
+        ON CONFLICT(session_key) DO UPDATE SET revision_at=excluded.revision_at, event_count=excluded.event_count,
+          source_path=excluded.source_path, updated_at=excluded.updated_at`)
+        .run(first.session_key, rank.revision_at, rank.event_count, absolutePath, new Date().toISOString());
       this.db.exec('COMMIT');
       return { imported, skipped, pending };
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }

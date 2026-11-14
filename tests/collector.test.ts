@@ -126,7 +126,7 @@ test('project matching uses the session cwd and re-evaluates files after scope c
   assert.ok(first.archive.exportBatch(0, 100).events.every(event => event.project_id === 'demo'));
 });
 
-test('partial tails wait, malformed lines roll back, and source rewrites retry without advancing checkpoints', async t => {
+test('partial tails wait, malformed lines roll back, and rewrites replace the newer revision', async t => {
   const fixture = setup(t, 'all');
   const { archive, collector } = open(fixture);
   t.after(() => archive.close());
@@ -162,14 +162,21 @@ test('partial tails wait, malformed lines roll back, and source rewrites retry w
   assert.equal(repaired.skipped, 11);
   assert.equal(archive.highWatermark(), 11);
 
+  // An in-place rewrite of equal size is reconciled: the changed record is
+  // replaced without retrying forever and without touching other events.
   writeFileSync(fixture.file, full.replace('"task_complete"', '"turn_aborted"'));
-  const conflict = await collector.scanOnce();
-  assert.equal(conflict.errors, 1);
-  assert.equal(archive.highWatermark(), 11);
+  const rewrite = await collector.scanOnce();
+  assert.equal(rewrite.errors, 0);
+  assert.equal(rewrite.imported, 1);
+  assert.equal(rewrite.skipped, 10);
+  assert.equal(archive.highWatermark(), 12);
+  assert.ok(archive.exportBatch(0, 100, 'metadata').events.some(event => event.kind === 'turn.interrupted'));
   writeFileSync(fixture.file, full);
   const restored = await collector.scanOnce();
   assert.equal(restored.errors, 0);
-  assert.equal(archive.highWatermark(), 11);
+  assert.equal(restored.imported, 1);
+  assert.equal(restored.skipped, 10);
+  assert.equal(archive.highWatermark(), 13);
 
   const missingSession = path.join(fixture.logs, 'no-meta.jsonl');
   writeFileSync(missingSession, '{"type":"event_msg","payload":{"type":"task_started"}}\n');

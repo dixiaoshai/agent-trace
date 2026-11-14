@@ -63,7 +63,7 @@ test('partial tail waits for completion and keeps original identity', t => {
   assert.equal(two.imported, 1); assert.equal(two.skipped, 10);
 });
 
-test('malformed complete lines and conflicting source rewrites are atomic', t => {
+test('malformed lines are atomic while in-place rewrites replace changed records', t => {
   const { filename, archive } = setup(t);
   const full = readFileSync(filename, 'utf8');
   writeFileSync(filename, full + '{broken}\n');
@@ -71,9 +71,23 @@ test('malformed complete lines and conflicting source rewrites are atomic', t =>
   assert.equal(archive.exportBatch().events.length, 0);
   writeFileSync(filename, full);
   archive.importFile(filename, 'local', 'demo');
+
+  // Same session, one changed record and one appended record: the newer
+  // revision wins, unchanged events keep their identity, the old record goes.
   writeFileSync(filename, full.replace('task_complete', 'turn_aborted') + '{"type":"future","payload":{}}\n');
-  assert.throws(() => archive.importFile(filename, 'local', 'demo'), /Existing source record changed/);
-  assert.equal(archive.exportBatch().events.length, 11);
+  const rewritten = archive.importFile(filename, 'local', 'demo');
+  assert.equal(rewritten.imported, 2);
+  assert.equal(rewritten.skipped, 10);
+  const events = archive.exportBatch(0, 100, 'metadata').events;
+  assert.equal(events.length, 12);
+  assert.ok(events.some(event => event.kind === 'turn.interrupted'));
+  assert.ok(!events.some(event => event.kind === 'turn.completed'));
+  // An older revision arriving late must not roll the projection back.
+  writeFileSync(filename, full);
+  const older = archive.importFile(filename, 'local', 'demo');
+  assert.equal(older.imported, 0);
+  assert.equal(older.skipped, 11);
+  assert.equal(archive.exportBatch(0, 100, 'metadata').events.length, 12);
   assert.throws(() => archive.importFile(fixture, 'local', 'other-project'), /another project/);
 });
 
@@ -227,19 +241,22 @@ test('folded rollouts keep distinct event identities and still deduplicate copie
   ].join('\n') + '\n');
 
   const parentReport = archive.importFile(parent, 'local', 'demo');
-  const childReport = archive.importFile(child, 'local', 'demo');
   assert.equal(parentReport.imported, 3);
+  // The child rollout is a newer revision of the same session identity: it
+  // replaces the parent revision instead of merging cumulative snapshots.
+  const childReport = archive.importFile(child, 'local', 'demo');
   assert.equal(childReport.imported, 3);
+  assert.equal(childReport.skipped, 0);
   const batch = archive.exportBatch(0, 100, 'metadata');
-  assert.equal(batch.events.length, 6);
-  assert.equal(new Set(batch.events.map(event => event.event_id)).size, 6);
+  assert.equal(batch.events.length, 3);
   assert.ok(batch.events.every(event => event.session_id === 'parent-session'));
+  assert.ok(batch.events.every(event => event.source!.series === 'child-session'));
 
   // A copied child rollout is the same evidence even though its path changed.
   const copy = path.join(dir, 'child-copy.jsonl');
   copyFileSync(child, copy);
   assert.equal(archive.importFile(copy, 'local', 'demo').imported, 0);
-  assert.equal(archive.exportBatch(0, 100, 'metadata').events.length, 6);
+  assert.equal(archive.exportBatch(0, 100, 'metadata').events.length, 3);
 });
 
 test('single-identity logs keep the published v1 event identifier', t => {

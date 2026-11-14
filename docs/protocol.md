@@ -89,14 +89,21 @@ authoritative complete source record. Consumers use `event_id` to cite evidence.
 `runtime` identifies the harness, separate from model provider and model name.
 
 For the Codex v1 adapter, `event_id = SHA256(JSON.stringify([runtime, instance_id,
-session_id, one_based_line_number]))`. Copies/moves retain identity. Reimport of
-the same identity with a different record hash or project ID fails atomically
-with `SOURCE_CONFLICT`; edited/rebased logs require a new source instance and
-explicit downstream handling. Identical content on two DIFFERENT lines is NOT
-deduplicated. Native IDs and parser version are preserved when available; future
-adapters may use native IDs instead of ordinal positions. Event identity must not
-depend on the normalizer version. Unknown records remain `source.unknown` with
-their original native type and raw payload when captured.
+session_id, one_based_line_number]))`. Copies/moves retain identity. Identical
+content on two DIFFERENT lines is NOT deduplicated. Native IDs and parser version
+are preserved when available; future adapters may use native IDs instead of
+ordinal positions. Event identity must not depend on the normalizer version.
+Unknown records remain `source.unknown` with their original native type and raw
+payload when captured.
+
+One session identity can be covered by several rollout files, and Codex can
+rewrite a rollout in place. The archive keeps one revision per session: the
+file with the greatest last event timestamp, then the greatest number of
+records. A newer revision replaces the previous one; an equal revision is
+reconciled in place (changed records are replaced, identical records keep their
+`event_id` and sequence); an older revision is skipped without rollback.
+Project changes for an existing session still fail with `SOURCE_CONFLICT`, and
+consumers see ordinary events with monotonic cursors either way.
 
 A Codex rollout can contain more than one `session_meta`: resuming a conversation
 appends the new identity, and subagent rollouts repeat the parent identity after

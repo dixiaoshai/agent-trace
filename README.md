@@ -77,7 +77,7 @@ npm run cli -- archive-search --query 幂等键 --project demo --config agent-kn
 
 新数据库默认 `metadata` 捕获，仅保存结构字段、最多 80 字符的请求标题与来源定位。这些字段仍可能敏感。需要正文证据时，针对明确选定的来源，在新建数据库时显式使用 `--capture content`。捕获模式建立后不可静默切换。
 
-content 会保存原始解析记录、请求/响应、工具参数和输出、可见推理摘要；不是隐藏推理，也不承诺自动识别散落在正文中的密钥。metadata 导出固定剔除 `body/raw`。原始 `record_hash` 基于源行字节；消费者保留该来源声明，但批次仅携带解析后的原始对象，不能凭其重算原始行哈希。
+content 会保存用户请求、回答、工具参数和输出、可见推理摘要、计划与最终回答；不是隐藏推理。进入归档前会脱敏常见凭据形态与敏感 JSON 字段，并把超大字符串外置为带 `bytes`/`sha256` 的 `content_ref` 文件，不静默截断。脱敏是启发式保护，不承诺发现所有散落密钥。metadata 导出固定剔除 `body/raw`。原始 `record_hash` 基于源行字节；消费者保留该来源声明，但批次仅携带解析（且已脱敏）的对象，不能凭其重算原始行哈希。content 试点使用独立数据库与 blob 目录，步骤见[正文归档](docs/content-capture.md)。
 
 ```sh
 npm run cli -- delete-session --runtime codex --instance demo-device --session archive-demo-session --db .agent-trace/demo.sqlite

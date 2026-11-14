@@ -56,6 +56,7 @@ Accept: application/json
 
 - 服务端唯一批次生成逻辑是现有 `Archive.exportBatch`；HTTP 与 CLI `export` 的事件顺序、事件身份、视图投影和游标语义一致。
 - `metadata` 响应始终 `body=null`、`raw=null`；`content` 只返回建库时已捕获的内容，未捕获仍为 `null`。
+- content 模式对常见凭据和敏感字段脱敏；超大字符串以 `content_ref`（绝对路径、`bytes`、`sha256`）返回，不截断。客户端必须校验引用后再读取，不能把引用当作普通正文。
 - `GET` 幂等，不推进服务端或消费方进度。相同范围可重试，没有“确认收货”副作用。
 - `has_more=true` 时消费方立即用 `next_cursor` 续取；追平后按自身空闲间隔轮询。
 - 空页可因删除标记或已有事件被删而跨过序号；`archive_seq` 允许空洞。

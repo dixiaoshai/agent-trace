@@ -24,10 +24,14 @@ The archive requires explicit source paths, instance ID and project ID. It does
 not discover or import the user's history automatically. The database's capture
 mode is fixed on creation: `metadata` by default, `content` only when explicitly
 selected. Metadata includes bounded prompt titles and paths and is still private.
-Content capture includes original records, tool arguments/results and visible
-reasoning summaries. It cannot reveal hidden/encrypted reasoning and provides no
-guarantee that secrets embedded in prose are detected; select sources accordingly.
-No outbound network calls or model calls are made.
+Content capture includes prompts, answers, visible reasoning summaries, plans and
+tool arguments/results. Before storage, common credential shapes and secret-named
+JSON fields are replaced with explicit `[REDACTED:<kind>]` markers, and oversized
+strings are externalized as verifiable local references (see
+[content capture](content-capture.md)). Redaction is heuristic: it cannot reveal
+hidden/encrypted reasoning and does not prove that free prose or private formats
+are secret-free; select sources accordingly. No outbound network calls or model
+calls are made.
 
 ## Batch envelope
 
@@ -83,9 +87,11 @@ unknown event kinds as stored evidence or skip them without losing cursor progre
 
 `body` and `raw` are ALWAYS null in the metadata view, with an allowlisted `data`
 payload. Content view supplies them only if captured; missing content stays null.
-`raw` is the original parsed JSON object; hash identifies original line bytes
-excluding LF (and CR for CRLF). `body` is a convenience representation, never the
-authoritative complete source record. Consumers use `event_id` to cite evidence.
+In content mode `body` and `raw` are the parsed record **after redaction and
+externalization**; `source.record_hash` still identifies the original line bytes
+excluding LF (and CR for CRLF), so it asserts provenance and is not a hash of the
+redacted copy. `body` is a convenience representation, never the authoritative
+complete source record. Consumers use `event_id` to cite evidence.
 `occurred_at` is null if missing/invalid; ingestion order remains available.
 `runtime` identifies the harness, separate from model provider and model name.
 
@@ -134,7 +140,7 @@ All ordinary events include nullable `turn_id`, `root_turn_id`, and `model`.
 | `session.started` | `cwd`, `parent_session_id`, `forked_from_session_id`, `created_at`, `cli_version`, optional `title` (single line, max 80 characters, read beside the source) | null |
 | `turn.context` | no additional fields | null |
 | `turn.started` | no additional fields | null |
-| `turn.completed` | no additional fields | optional text |
+| `turn.completed` | no additional fields | optional final answer text (Codex `task_complete.last_agent_message`; pi exposes the terminal answer as `message.assistant`) |
 | `turn.interrupted` | no additional fields | null |
 | `message.user` | `title` (single line, max 80 characters) | `text` |
 | `message.assistant` | no additional fields | `text` |
@@ -145,6 +151,19 @@ All ordinary events include nullable `turn_id`, `root_turn_id`, and `model`.
 | `context.compacted` | no additional fields | optional summary |
 | `source.unknown` | no additional fields | null; original in `raw` |
 | `session.deleted` | no additional fields | null |
+
+Content-mode bodies can contain a `content_ref` object in place of a string that
+exceeded Trace's inline limit:
+
+```json
+{"content_ref": {"path": "/private/blobs/<event>-<sha256>.txt", "bytes": 4133,
+                 "sha256": "<64-hex>", "media_type": "text/plain"}}
+```
+
+`content_ref` is reserved. The file holds the complete redacted string (no
+truncation); readers verify the absolute path is inside the expected directory,
+`bytes` and `sha256`, then read UTF-8 text. The same replacement is applied to
+both `body` and `raw`. Metadata titles are redacted but bounded to 80 characters.
 
 Usage objects allow ONLY nonnegative integer `input_tokens`, `cached_input_tokens`,
 `cache_write_input_tokens`, `output_tokens`, `reasoning_output_tokens`,
@@ -216,16 +235,18 @@ filtered streams remain future work. A parsed `raw` value cannot reproduce the
 source line's whitespace/encoding, so consumers retain `record_hash` as the
 archive's source assertion, not an independently verified byte hash.
 
-`delete-session` removes captured events including body/raw, and appends a
-`session.deleted` tombstone in the same transaction. Deleted sessions cannot be
+`delete-session` removes captured events including body/raw and any blob files
+they reference, and appends a `session.deleted` tombstone in the same transaction. Deleted sessions cannot be
 silently reimported. This is an explicit erasure exception to append-only history.
 Its event ID is `SHA256(JSON.stringify([runtime, instance_id, session_id,
 "deleted"]))`, its source/body/raw are null, and data is empty. The same marker
 cannot appear again at a different sequence position; page retries remain valid.
 Consumers must delete corresponding evidence/statistics and advance their cursor
-transactionally. Exports made before deletion, consumer backups and filesystem
-copies are separate copies and require their own cleanup; this is not a secure
-erasure guarantee. New consumers see tombstones even when prior events were removed.
+transactionally. Exports made before deletion, consumer backups, externalized blob copies and
+filesystem copies are separate copies and require their own cleanup; this is not
+a secure erasure guarantee. A blob written before an archive transaction that
+later rolled back is an unreferenced orphan and can be removed by directory
+audit. New consumers see tombstones even when prior events were removed.
 
 ## First acceptance criteria
 

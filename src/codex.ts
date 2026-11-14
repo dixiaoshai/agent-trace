@@ -106,7 +106,13 @@ export function normalize(
     } else if (row.type === 'turn_context') kind = 'turn.context';
     else if (row.type === 'event_msg') {
       if (subtype === 'task_started') kind = 'turn.started';
-      else if (subtype === 'task_complete' || subtype === 'task_completed') kind = 'turn.completed';
+      else if (subtype === 'task_complete' || subtype === 'task_completed') {
+        kind = 'turn.completed';
+        // Codex reports the final answer on task_complete; capture it when the
+        // source provides it (protocol allows optional turn.completed text).
+        const final = text(p.last_agent_message);
+        if (final) body = { text: final };
+      }
       else if (subtype === 'turn_aborted') kind = 'turn.interrupted';
       else if (subtype === 'token_count') {
         const info = object(p.info);

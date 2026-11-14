@@ -18,7 +18,7 @@ node src/cli.ts serve --config PATH [--db OVERRIDE.sqlite]
 
 成功时输出规范化后的配置 JSON（相对路径已按配置文件目录解析）；`token_sha256` 不会回显。失败时退出码为 1，错误代码为 `INVALID_CONFIG`，消息给出字段路径，例如 `config.collection.sources[0].root: ...`。未知字段一律拒绝，避免拼写错误静默扩大采集范围或访问权限。
 
-示例文件：[agent-trace.service.example.json](../agent-trace.service.example.json)。示例默认关闭采集与 API；启用前必须替换占位路径和 token 哈希。`config-check` 通过不代表来源目录已存在或数据库捕获模式匹配，这些在 `serve` 启动时检查。
+示例文件：[agent-trace.service.example.json](../agent-trace.service.example.json)（metadata）与 [agent-trace.content.example.json](../agent-trace.content.example.json)（content 试点，独立库与 blob 目录）。示例默认关闭采集与 API；启用前必须替换占位路径和 token 哈希。`config-check` 通过不代表来源目录已存在或数据库捕获模式匹配，这些在 `serve` 启动时检查。
 
 ## 完整格式
 
@@ -27,6 +27,10 @@ node src/cli.ts serve --config PATH [--db OVERRIDE.sqlite]
   "schema_version": 1,
   "database": ".agent-trace/trace.sqlite",
   "capture_mode": "metadata",
+  "content": {
+    "max_inline_bytes": 65536,
+    "blob_directory": ".agent-trace/content-blobs"
+  },
   "collection": {
     "enabled": true,
     "scan_interval_seconds": 30,
@@ -61,8 +65,18 @@ node src/cli.ts serve --config PATH [--db OVERRIDE.sqlite]
 | `schema_version` | 是 | — | 当前固定为 `1` |
 | `database` | 否 | 配置目录下的 `.agent-trace/trace.sqlite` | 相对路径相对配置文件；显式路径优先，不静默迁移或复制存量数据 |
 | `capture_mode` | 否 | `metadata` | `metadata` 或 `content`；数据库建立后模式固定，`serve` 发现不一致会报 `CAPTURE_MODE` |
+| `content` | 否 | 见下 | content 模式的脱敏与外置策略；metadata 归档也会解析并回报，但不使用 |
 | `collection` | 是 | — | 采集配置对象 |
 | `api` | 是 | — | 本机 API 配置对象 |
+
+### `content`
+
+| 字段 | 必填 | 默认 | 规则 |
+| --- | --- | --- | --- |
+| `max_inline_bytes` | 否 | `65536` | 单个字符串内联上限，整数 `1..8388608`；超过时不截断，改存 `content_ref` 外置文件 |
+| `blob_directory` | 否 | `<数据库所在目录>/content-blobs` | 外置正文目录，相对路径相对配置文件；必须可写；文件 `0600`、目录 `0700` |
+
+脱敏规则固定、不可关闭，覆盖 `body`、`raw`、外置文件与运行日志，详见[正文归档](content-capture.md)。`content_ref` 是保留结构，消费方必须按绝对路径、字节数和 SHA-256 校验。content 模式应使用**独立数据库**；已有 metadata 库不能通过修改此配置补回正文。
 
 ### `collection`
 
@@ -126,6 +140,8 @@ unset TOKEN
 - 省略 `database` 时沿用既有默认规则：配置目录下 `.agent-trace/trace.sqlite` 优先；仅当它不存在且旧 `.agent-archive/archive.sqlite` 存在时使用旧库。显式 `database` 或 `--db` 始终优先。
 - 显式路径不存在时会新建空归档；不会自动回退到旧库，也不会移动、复制或删除存量数据。切换数据库前必须规划消费方游标与重建，不能把同一会话静默交给另一个归档。
 - `capture_mode` 只在建库时生效。对已有库请求不同模式会在打开时报 `CAPTURE_MODE`；不要另建库来“切换”同一会话的捕获模式。
+- content 归档必须使用新的独立数据库与独立 blob 目录，并作为独立 `archive_id` 配置消费方游标。正式 metadata 库、两个消费方现有游标不因正文试点改变。
+- `content.blob_directory` 默认跟随数据库目录；若它落在代码仓库或同步盘内，请显式改到私密目录。删除 content 数据库时不会自动删除 blob 目录或导出副本。
 
 ## 项目匹配规则
 
@@ -146,6 +162,8 @@ unset TOKEN
 | --- | --- |
 | 数据库 | `<配置目录>/.agent-trace/trace.sqlite`（旧库存在时回退 `.agent-archive/archive.sqlite`） |
 | 捕获模式 | `metadata` |
+| 内联正文上限 | 65536 字节 |
+| 外置正文目录 | `<数据库所在目录>/content-blobs` |
 | 采集开关 | 由 `collection.enabled` 明确指定 |
 | 扫描间隔 | 30 秒 |
 | 历史回补 | `none` |
@@ -165,6 +183,6 @@ unset TOKEN
 
 ## 当前范围与下一步
 
-已实现：严格配置解析、路径解析与兼容规则、项目/cwd 匹配、token 摘要与视图能力校验、请求与状态契约、`serve --config`、来源扫描调度、运行租约/心跳、SQLite/HTTP 生命周期、`GET /v1/events`、`GET /v1/status`。
+已实现：严格配置解析、路径解析与兼容规则、项目/cwd 匹配、token 摘要与视图能力校验、请求与状态契约、`serve --config`、来源扫描调度、运行租约/心跳、SQLite/HTTP 生命周期、`GET /v1/events`、`GET /v1/status`，以及 content 模式的脱敏、外置大输出与 `content` 配置。
 
 未实现：消费方 `follow` 自动拉取（P2）、按项目过滤的事件流、非回环监听、浏览器 UI、长期运行的真实 Codex 宿主验收与网络故障/超时矩阵。不要因为服务可启动就假定自动消费链已经可用。

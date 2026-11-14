@@ -100,3 +100,30 @@ P0 当时明确未验证（P1 已补齐，见下节）：没有实现或启动 `
 - 网络测试只使用 `127.0.0.1` 回环和合成日志；没有验证非回环部署、浏览器前端或大规模日志吞吐。
 - 5 分钟采集租约用于避免长文件导入期间被误接管，但未做长时间运行和强制崩溃恢复实测。
 - P1 尚未由未参与实现的 reviewer 独立审查。
+
+## 正文归档保护（2026-11-14）
+
+实际执行（合成数据，未读取真实会话，未启用真实 content 采集）：
+
+| 范围 | 命令 | 结果 |
+| --- | --- | --- |
+| Agent Trace | `npm run check` | 类型检查、57 项测试和 JavaScript 构建通过 |
+| 跨项目批次回归 | `npm run verify:consumers` | 通过；临时库与合成日志，metadata 统计隔离、content 证据与删除传播不变 |
+| content 示例配置 | `node src/cli.ts config-check --config agent-trace.content.example.json` | 通过；仍不建库、不扫描、不监听 |
+| Agent Knowledge | `npm run check`（content_ref 兼容） | 类型检查、42 项测试和构建通过 |
+| 跨项目 content 引用 | 合成 70 KB 工具输出 → Trace `ingest`/`export` → Knowledge `archive-import`/`archive-search`/`archive-read`（worktree） | 通过；blob 已脱敏、`content_ref` 可检索并可原样读回引用元数据 |
+
+新增覆盖：
+
+- 常见凭据形态（私钥、Bearer/Authorization、`sk-`、GitHub/AWS/Slack/JWT/Google/GitLab/npm token、URL userinfo、键值/JSON 敏感字段、结构化敏感键）在 `body`、`raw`、`data.title` 中被替换为显式 `[REDACTED:<类别>]`，`source.record_hash` 仍指向原始源行；`serve` 日志事件递归脱敏。
+- 超过 `max_inline_bytes` 的字符串写入 `0600` blob 文件（目录 `0700`），内容完整且已脱敏；`body` 与 `raw` 同步替换为带绝对路径、`bytes`、`sha256`、`media_type` 的 `content_ref`；重新读取可逐字节校验哈希与长度，没有截断。
+- 重复导入不产生重复事件或新 blob；内容相同的 revision 和解后不会删除仍被引用文件；`delete-session` 清除会话事件、墓碑与 blob。
+- metadata 导出仍固定 `body/raw=null`，且不含密钥、blob 路径或正文；content 库模式仍固定，不能由已有 metadata 库切换。
+- `content` 配置严格校验（整数范围、未知键、绝对/相对路径、`~` 拒绝），默认值与数据库同目录；示例配置使用独立数据库、三个项目 allowlist、codex/pi 来源和关闭的采集/API。
+- Agent Knowledge 接受并校验 `content_ref`（绝对路径、非负字节数、64 位 SHA-256、`text/plain`，且 `body` 与 `raw` 一致），拒绝截断、相对路径和错误哈希；检索、读取与项目范围限制保持。
+
+明确未验证：
+
+- 未在真实 Codex/pi 历史或三个试点项目上启用 content 采集，未统计真实脱敏命中/误报，未评估真实复盘价值；也未安装 LaunchAgent 或修改正式 metadata 库。
+- 未实现 blob 自动垃圾回收、加密、独立保留期，也未把外置正文复制到 Knowledge；大输出正文读取仍需访问 blob 并按哈希校验。
+- 未运行 Stats/Knowledge `follow` 端到端、断网/超时矩阵或未参与实现的 reviewer 审查。

@@ -4,6 +4,9 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { NORMALIZER_VERSION, normalize, parseRecords, sessionCwd as codexSessionCwd } from './codex.ts';
 import {
+  contentPolicy, protectEvent, referencedBlobs, removeBlobs, type ContentOptions, type ContentPolicy,
+} from './content.ts';
+import {
   detectRuntime, normalize as normalizePi, parseRecords as parsePiRecords, sessionCwd as piSessionCwd,
 } from './pi.ts';
 import type { TitleLookup } from './titles.ts';
@@ -24,7 +27,9 @@ export class Archive {
   db: DatabaseSync;
   archiveId: string;
   captureMode: View;
-  constructor(filename: string, captureMode?: View) {
+  readonly content: ContentPolicy;
+  constructor(filename: string, captureMode?: View, contentOptions: ContentOptions = {}) {
+    this.content = contentPolicy(filename, contentOptions);
     if (filename !== ':memory:') mkdirSync(path.dirname(path.resolve(filename)), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(filename);
     try {
@@ -100,9 +105,14 @@ export class Archive {
       projectId = project(cwd);
       identifier(projectId, 'project ID');
     } else projectId = project;
-    const events = runtime === 'pi'
+    const normalized = runtime === 'pi'
       ? normalizePi(records, absolutePath, instanceId, projectId, this.captureMode)
       : normalize(records, absolutePath, instanceId, projectId, this.captureMode, titles);
+    // Content protection runs before the archive transaction: a blob write
+    // failure aborts the import instead of committing an unprotected event.
+    const events = this.captureMode === 'content'
+      ? normalized.map(event => protectEvent(event, this.content))
+      : normalized;
     const first = events[0]!;
     // A rollout can be rewritten in place, and Codex can leave several files
     // for one session identity (resumed or subagent rollouts). Like the direct
@@ -137,23 +147,27 @@ export class Archive {
       this.db.prepare('INSERT OR IGNORE INTO sessions(session_key,runtime,instance_id,session_id,project_id) VALUES(?,?,?,?,?)')
         .run(first.session_key, first.runtime, instanceId, first.session_id, projectId);
       const existing = new Map(
-        this.db.prepare('SELECT event_id,record_hash FROM events WHERE session_key=?').all(first.session_key)
-          .map(row => [String(row.event_id), String(row.record_hash)]),
+        this.db.prepare('SELECT event_id,record_hash,payload FROM events WHERE session_key=?').all(first.session_key)
+          .map(row => [String(row.event_id), { record_hash: String(row.record_hash), payload: String(row.payload) }]),
       );
       const incoming = new Map(events.map(event => [event.event_id, event]));
       const remove = this.db.prepare('DELETE FROM events WHERE event_id=?');
       const add = this.db.prepare('INSERT INTO events(event_id,session_key,record_hash,payload) VALUES(?,?,?,?)');
       let imported = 0;
       let skipped = 0;
+      const removedBlobs: string[] = [];
       // A different winning rollout replaces the previous revision entirely;
       // otherwise unchanged lines keep their identity and sequence position.
-      for (const [eventId, recordHash] of existing) {
+      for (const [eventId, prior] of existing) {
         const next = incoming.get(eventId);
-        if (!next || next.source!.record_hash !== recordHash) remove.run(eventId);
+        if (!next || next.source!.record_hash !== prior.record_hash) {
+          remove.run(eventId);
+          removedBlobs.push(...referencedBlobs(prior.payload));
+        }
       }
       for (const event of events) {
         const prior = existing.get(event.event_id);
-        if (prior !== undefined && prior === event.source!.record_hash) { skipped++; continue; }
+        if (prior !== undefined && prior.record_hash === event.source!.record_hash) { skipped++; continue; }
         add.run(event.event_id, event.session_key, event.source!.record_hash, JSON.stringify(event));
         imported++;
       }
@@ -163,6 +177,10 @@ export class Archive {
           source_path=excluded.source_path, updated_at=excluded.updated_at`)
         .run(first.session_key, rank.revision_at, rank.event_count, absolutePath, new Date().toISOString());
       this.db.exec('COMMIT');
+      // A reconciled rewrite can reuse a blob path for identical redacted
+      // content; never delete a file the just-committed events still cite.
+      const kept = new Set(events.flatMap(event => referencedBlobs(JSON.stringify(event))));
+      removeBlobs(removedBlobs.filter(blob => !kept.has(blob)), this.content);
       return { imported, skipped, pending };
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
@@ -203,6 +221,8 @@ export class Archive {
     try {
       const session = this.db.prepare('SELECT * FROM sessions WHERE session_key=?').get(key);
       if (!session || session.deleted) { this.db.exec('COMMIT'); return { deleted: false }; }
+      const payloads = this.db.prepare('SELECT payload FROM events WHERE session_key=?').all(key)
+        .map(row => String(row.payload));
       this.db.prepare('DELETE FROM events WHERE session_key=?').run(key);
       this.db.prepare('UPDATE sessions SET deleted=1 WHERE session_key=?').run(key);
       const now = new Date().toISOString();
@@ -212,7 +232,11 @@ export class Archive {
         kind: 'session.deleted', occurred_at: now, observed_at: now, native_type: 'archive.session_deleted', source: null, data: {}, body: null, raw: null,
       };
       this.db.prepare('INSERT INTO events(event_id,session_key,record_hash,payload) VALUES(?,?,?,?)').run(event.event_id, key, hash('deleted'), JSON.stringify(event));
-      this.db.exec('COMMIT'); return { deleted: true, event_id: event.event_id };
+      this.db.exec('COMMIT');
+      // Erasure includes content-mode blobs; the paths are constrained to the
+      // configured directory by removeBlobs().
+      if (this.captureMode === 'content') removeBlobs(payloads.flatMap(referencedBlobs), this.content);
+      return { deleted: true, event_id: event.event_id };
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
   status(): ArchiveStatus {

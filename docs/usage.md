@@ -143,7 +143,7 @@ curl -sS -H "Authorization: Bearer $AGENT_TRACE_STATS_TOKEN" \
 node src/cli.ts read --db .agent-trace/demo.sqlite --event EVENT_ID --view content
 ```
 
-默认读取视图为 metadata。content 包含已捕获的方便读取正文和原始解析对象，未知原生记录可能只在 `raw` 中有内容。工具返回仅证明记录中观察到了结果，不是外部操作成功的独立保证。
+默认读取视图为 metadata。content 包含已捕获的方便读取正文和解析对象（已脱敏），未知原生记录可能只在 `raw` 中有内容。超大字符串被替换为 `content_ref`，需按绝对路径、`bytes` 和 `sha256` 读取并校验文件；`content_ref` 是保留键。工具返回仅证明记录中观察到了结果，不是外部操作成功的独立保证。
 
 ## 选定真实会话
 
@@ -157,7 +157,7 @@ node src/cli.ts ingest --source /absolute/path/to/selected-rollout.jsonl --insta
 
 在多项目目录上运行一次命令会把所有导入会话绑定到该次 `--project`，因此应按项目分次选择来源。Agent Knowledge 配置的 `allowed_project_ids` 必须覆盖导出页内全部项目，否则整页拒绝；当前没有按项目过滤导出流。试点可按授权范围创建独立归档库。
 
-content 捕获包含请求、工具参数/输出及可见推理摘要；没有自动检测任意正文秘密的能力。metadata 仍包含标题与路径。选择恰当范围后再导入，不要以导出视图替代捕获策略。
+content 捕获包含请求、回答、最终回答、工具参数/输出、可见推理摘要与计划，并在落库前脱敏常见凭据形态与敏感字段；超过内联上限的字符串外置为可核验文件，不截断。脱敏仍是启发式，不能发现所有正文秘密。metadata 仍包含（也会脱敏的）标题与路径。选择恰当范围后再导入，不要以导出视图替代捕获策略。试点步骤见[正文归档](content-capture.md)。
 
 ## 删除和检查传播
 

@@ -1,5 +1,6 @@
 import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { DEFAULT_MAX_INLINE_BYTES, MAX_MAX_INLINE_BYTES, MIN_MAX_INLINE_BYTES, defaultBlobDirectory, type ContentPolicy } from './content.ts';
 import { defaultDatabase } from './paths.ts';
 import { ArchiveError, identifier, type JsonObject, type RuntimeHint, type View } from './types.ts';
 
@@ -60,6 +61,8 @@ export interface ServiceConfig {
   config_path: string;
   database: string;
   capture_mode: View;
+  /** Content-mode protection; also exposed for metadata archives where it is unused. */
+  content: ContentPolicy;
   collection: CollectionConfig;
   api: ApiConfig;
 }
@@ -196,6 +199,21 @@ function parseSources(value: unknown, at: string, directory: string): SourceConf
   return sources;
 }
 
+function parseContent(value: unknown, at: string, database: string, directory: string): ContentPolicy {
+  if (value === undefined) {
+    return { max_inline_bytes: DEFAULT_MAX_INLINE_BYTES, blob_directory: defaultBlobDirectory(database) };
+  }
+  const content = strictObject(value, at, ['max_inline_bytes', 'blob_directory'], []);
+  const maxInline = content.max_inline_bytes === undefined
+    ? DEFAULT_MAX_INLINE_BYTES
+    : integer(content.max_inline_bytes, `${at}.max_inline_bytes`, MIN_MAX_INLINE_BYTES, MAX_MAX_INLINE_BYTES);
+  // Relative to the configuration file, like every other configured path.
+  const blobDirectory = content.blob_directory === undefined
+    ? defaultBlobDirectory(database)
+    : resolvePath(content.blob_directory, `${at}.blob_directory`, directory);
+  return { max_inline_bytes: maxInline, blob_directory: blobDirectory };
+}
+
 /** Load and strictly validate a service configuration file. Does not create or open the archive database. */
 export function loadServiceConfig(filename: string, options: LoadServiceConfigOptions = {}): ServiceConfig {
   const configPath = path.resolve(filename);
@@ -207,13 +225,14 @@ export function loadServiceConfig(filename: string, options: LoadServiceConfigOp
   try { parsed = JSON.parse(readFileSync(configPath, 'utf8')); } catch (error) {
     invalid('config', `invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
-  const top = strictObject(parsed, 'config', ['schema_version', 'database', 'capture_mode', 'collection', 'api'], ['schema_version', 'collection', 'api']);
+  const top = strictObject(parsed, 'config', ['schema_version', 'database', 'capture_mode', 'content', 'collection', 'api'], ['schema_version', 'collection', 'api']);
   if (top.schema_version !== SERVICE_CONFIG_VERSION) invalid('config.schema_version', `must be ${SERVICE_CONFIG_VERSION}`);
   const directory = path.dirname(configPath);
   const database = options.database !== undefined
     ? resolvePath(options.database, '--db', process.cwd())
     : top.database === undefined ? defaultDatabase(directory) : resolvePath(top.database, 'config.database', directory);
   const captureMode = top.capture_mode === undefined ? 'metadata' : view(top.capture_mode, 'config.capture_mode');
+  const content = parseContent(top.content, 'config.content', database, directory);
 
   const collection = strictObject(top.collection, 'config.collection', ['enabled', 'scan_interval_seconds', 'backfill', 'sources'], ['enabled', 'sources']);
   const collectionEnabled = boolean(collection.enabled, 'config.collection.enabled');
@@ -240,6 +259,7 @@ export function loadServiceConfig(filename: string, options: LoadServiceConfigOp
     config_path: configPath,
     database,
     capture_mode: captureMode,
+    content,
     collection: { enabled: collectionEnabled, scan_interval_seconds: interval, backfill: backfillValue, sources },
     api: { enabled: apiEnabled, host: host as LoopbackHost, port, clients },
   };
@@ -280,6 +300,10 @@ export function describeServiceConfig(config: ServiceConfig): JsonObject {
     config_path: config.config_path,
     database: config.database,
     capture_mode: config.capture_mode,
+    content: {
+      max_inline_bytes: config.content.max_inline_bytes,
+      blob_directory: config.content.blob_directory,
+    },
     collection: {
       enabled: config.collection.enabled,
       scan_interval_seconds: config.collection.scan_interval_seconds,

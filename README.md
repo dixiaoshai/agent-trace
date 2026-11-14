@@ -48,7 +48,19 @@ npm run cli -- serve --config path/to/service.json --db path/to/pilot.sqlite
 
 采集按配置的来源扫描 `.jsonl`：首次 `backfill=none` 只记录基线，之后新文件或变化文件整文件重读并按事件身份去重；`backfill=all` 首次即导入当前文件。归档前按 `session_meta.cwd` 匹配项目，未知或歧义项目跳过并在状态中计数。单归档只允许一个采集租约；崩溃后租约过期可接管，重启会从已提交归档和扫描状态继续。
 
-不要同时运行两个采集进程；API-only 可设置 `collection.enabled=false`。消费方 `follow` worker 尚未实现（P2），当前仍需用 `export`/`import-archive`/`archive-import` 手动搬页，或由自己的脚本调用本机 API。
+不要同时运行两个采集进程；API-only 可设置 `collection.enabled=false`。消费方的 `follow` worker 已实现（P2），可用 `export`/`import-archive`/`archive-import` 手动回放，或由 `follow` 自动续读。
+
+### macOS 常驻（content 采集）
+
+`scripts/install-content-service.ts` 把 content 归档和 Knowledge 的 `follow` 装成两个登录项（`local.agent-trace-content`、`local.agent-knowledge-follow`），`RunAtLoad` + `KeepAlive`，安装前先做 `config-check` 与 blob 垃圾回收：
+
+```sh
+node --experimental-strip-types scripts/install-content-service.ts --dry-run   # 只打印计划，不碰 launchd
+node --experimental-strip-types scripts/install-content-service.ts             # 安装并启动
+node --experimental-strip-types scripts/install-content-service.ts --uninstall # 停止并移除（不动数据库与日志）
+```
+
+安装器不会替用户启用采集：配置必须已是 `capture_mode: "content"` 且 `collection.enabled=true`。详见[正文归档](docs/content-capture.md#常驻运行macos-launchd)。
 
 本模块不根据目录名猜测身份；`--instance` 标识来源设备/运行环境，`--project` 是统一项目标识。同一会话的项目绑定固定。当前会重新读取所选文件，通过事件身份去重，不是基于字节偏移的 tail 守护进程。源文件必须是完整 LF/CRLF 分行的 Codex JSONL，未结束的尾行等待下次导入；完整坏行或原位置内容变化使该文件整次导入失败。
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -181,4 +181,64 @@ test('content configuration validates inline limits and resolves blob paths', t 
     () => loadServiceConfig(writeConfig(dir, { ...base, content: { max_inline_bytes: 9 * 1024 * 1024 } })),
     /config\.content\.max_inline_bytes/,
   );
+});
+
+test('discarded revisions and rejected imports leave no orphan blobs', t => {
+  const { dir, source, blobs, archive } = setup(t);
+  archive.importFile(source, 'local', 'demo');
+  const filesAfterFirst = readdirSync(blobs);
+
+  // Same session identity, older revision: the importer skips it, so the blobs
+  // written while protecting the discarded payload must be removed again.
+  const older = path.join(dir, 'sources', 'older.jsonl');
+  const marker = `ORPHAN-${'z'.repeat(2048)}`;
+  writeFileSync(older, `${[
+    { timestamp: '2026-01-01T00:00:00Z', type: 'session_meta', payload: { id: 'content-session', cwd: '/synthetic/demo' } },
+    { timestamp: '2026-01-01T00:00:01Z', type: 'event_msg', payload: { type: 'user_message', message: 'discarded revision' } },
+    {
+      timestamp: '2026-01-01T00:00:02Z',
+      type: 'response_item',
+      payload: { type: 'function_call_output', call_id: 'call-9', output: marker },
+    },
+  ].map(record => JSON.stringify(record)).join('\n')}\n`);
+  assert.equal(archive.importFile(older, 'local', 'demo').imported, 0);
+  assert.deepEqual(readdirSync(blobs).sort(), filesAfterFirst.sort());
+  assert.equal(readdirSync(blobs).some(name => readFileSync(path.join(blobs, name), 'utf8').includes('ORPHAN-')), false);
+
+  // A deleted session rejects re-import; protection runs first, so the write
+  // must not survive the rejection either.
+  archive.deleteSession('codex', 'local', 'content-session');
+  const before = readdirSync(blobs);
+  assert.throws(() => archive.importFile(older, 'local', 'demo'), /SESSION_DELETED|deleted/i);
+  assert.deepEqual(readdirSync(blobs).sort(), before.sort());
+});
+
+test('gc removes only blob files no committed event cites', t => {
+  const { source, blobs, archive } = setup(t);
+  archive.importFile(source, 'local', 'demo');
+  const referenced = readdirSync(blobs);
+  assert.ok(referenced.length > 0);
+
+  const orphan = path.join(blobs, `${'a'.repeat(64)}-${'b'.repeat(64)}.txt`);
+  const unrelated = path.join(blobs, 'notes.txt');
+  writeFileSync(orphan, 'orphan', { mode: 0o600 });
+  writeFileSync(unrelated, 'keep me', { mode: 0o600 });
+
+  const dry = archive.pruneOrphanBlobs({ dry_run: true });
+  assert.equal(dry.orphans, 1);
+  assert.equal(dry.removed, 0);
+  assert.equal(dry.files, referenced.length + 1);
+  assert.equal(dry.referenced, referenced.length);
+  assert.ok(existsSync(orphan));
+
+  const result = archive.pruneOrphanBlobs();
+  assert.equal(result.orphans, 1);
+  assert.equal(result.removed, 1);
+  assert.equal(existsSync(orphan), false);
+  assert.ok(existsSync(unrelated), 'non-blob files are never candidates');
+  for (const name of referenced) assert.ok(existsSync(path.join(blobs, name)));
+
+  const metadata = new Archive(path.join(path.dirname(path.dirname(blobs)), 'metadata.sqlite'), 'metadata');
+  t.after(() => metadata.close());
+  assert.throws(() => metadata.pruneOrphanBlobs(), /CAPTURE_MODE|content archive/i);
 });

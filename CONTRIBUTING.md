@@ -88,13 +88,26 @@ python3 scripts/check_sensitive.py
 
 ## `main` 分支保护
 
-分支保护当前**仍不可用**：仓库为私有，个人账号未启用 GitHub Pro，GitHub 拒绝提供分支保护。因此 `CI success` 目前是合并前的参考检查，不能强制阻止合并；合并门槛仍是约定：
+仓库已转为公开（2026-11-14），使用 GitHub 经典分支保护（不是 Rulesets），对管理员同样生效：
 
-- 所有改动走 PR，建议 Squash 合并；
-- 合并前在最新 `main` 上复跑 `npm run check`，并确认 `CI success` 为绿；
-- 跨项目行为变化再跑 `npm run verify:consumers`。
+| 规则 | 值 |
+|---|---|
+| 必须走 Pull Request | 是 |
+| 必需状态检查 | `CI success` |
+| 分支必须与 main 同步 | 是（strict） |
+| 必需 review 数 | 0（单人开发；有协作者后可调高） |
+| 新 commit 后撤销旧 approval | 是 |
+| 合并前必须解决所有对话 | 是 |
+| 管理员绕过 | 禁止 |
+| Force push / 删除分支 | 禁止 |
 
-如果仓库转为公开或开通 GitHub Pro，把 `CI success` 设为必需状态检查（strict 同步、管理员不可绕过、禁止 force push/删除分支），与 agent-stats 的规则保持一致。**修改 CI Job 名称时必须同步更新必需状态检查名**，否则 PR 会永远等不到检查结果。
+查看当前规则：
+
+```bash
+gh api repos/dixiaoshai/agent-trace/branches/main/protection
+```
+
+> 修改 CI Job 名称时，必须同步更新必需状态检查名（当前为 `CI success`），否则 PR 会永远等不到检查结果。
 
 ## 敏感信息检查
 
@@ -116,7 +129,13 @@ python3 scripts/check_sensitive.py
 
 扫描规则和允许清单都在 `scripts/check_sensitive.py` 中：命中输出只显示前 4 个字符，避免 CI 日志变成泄漏源；`ALLOW` 只用于 `tests/` 里的合成 token 和文档占位符，新增条目必须写明原因。真实凭据和真实主目录路径应当删除，不要加进允许清单。
 
-GitHub 对公开仓库启用 secret scanning push protection；私有仓库没有这道服务端防线，更不能依赖“提交后再删”。**如果误提交了敏感信息**，不要只 `git revert`：
+三道防线：
+
+1. **GitHub secret scanning push protection**（本仓库已公开并启用）：`git push` 时服务端直接拒绝已知格式的 token（`GH013`）。
+2. **CI `Sensitive data scan`**：扫描所有 tracked 文件（token、私钥、JWT、URL 内嵌凭证、个人主目录路径、`.env` 类文件），命中则 `CI success` 失败。
+3. **本地自检**：提交前运行 `python3 scripts/check_sensitive.py`。
+
+**如果误提交了敏感信息**，不要只 `git revert` —— 内容仍留在历史里。正确顺序：
 
 1. 立刻在服务端**轮换/吊销**该凭证；
 2. 从工作树移除并提交；

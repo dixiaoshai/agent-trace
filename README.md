@@ -98,3 +98,7 @@ npm run verify:consumers
 首版包含前台常驻采集服务与只读 HTTP API，不含自动消费方 worker、多用户认证、自动经验提取或 Inspector UI 集成。数据协议与消费方独立游标已固定，后续适配器在同一入口接入。
 
 导出流尚无按项目授权过滤。Agent Knowledge 的项目配置须允许导出页内所有项目，否则整批拒绝。授权范围较窄时使用单独归档库；不要手工删掉页内事件并保留全局游标。
+
+## 参与贡献
+
+CI 会在每个 Pull Request 上运行 Node 24.15.0 的 typecheck / 测试 / 构建，以及敏感信息扫描，结果汇总为 `CI success`，`main` 要求该检查通过后才能合并。分支与合并、本地检查、CI 与分支保护、敏感信息检查的说明见 [CONTRIBUTING.md](CONTRIBUTING.md)；所有改动走 Pull Request，合并前在最新 `main` 上复跑 `npm run check`，跨项目行为变化再跑 `npm run verify:consumers`。

@@ -9,7 +9,7 @@
 Agent Trace 要求 Node.js 24.15.0+。运行使用 Node 自带 TypeScript 和 SQLite；`npm ci` 安装锁定的开发类型检查依赖。
 
 ```sh
-cd /Users/zhangdi/workspace/agent_tools/plugins/agent-trace
+cd ~/workspace/agent_tools/plugins/agent-trace
 npm ci
 npm run check
 npm run cli -- help
@@ -52,7 +52,7 @@ node src/cli.ts export --db .agent-trace/demo.sqlite --after 0 --limit 10000 --v
 在 Agent Stats 目录执行：
 
 ```sh
-cd /Users/zhangdi/workspace/agent_tools/plugins/agent-stats
+cd ~/workspace/agent_tools/plugins/agent-stats
 python3 -m agent_stats --db .agent-stats/shared-demo.sqlite import-archive --input ../agent-trace/.agent-trace/stats-page-1.json
 python3 -m agent_stats --db .agent-stats/shared-demo.sqlite summary
 ```
@@ -68,7 +68,7 @@ python3 -m agent_stats --db .agent-stats/shared-demo.sqlite serve --no-import
 在 Agent Knowledge 目录执行，使用项目内的合成配置：
 
 ```sh
-cd /Users/zhangdi/workspace/agent_tools/plugins/agent-knowledge
+cd ~/workspace/agent_tools/plugins/agent-knowledge
 npm run cli -- archive-import --input ../agent-trace/.agent-trace/evidence-page-1.json --config agent-knowledge.example.json
 npm run cli -- archive-search --query 幂等键 --project demo --config agent-knowledge.example.json
 ```

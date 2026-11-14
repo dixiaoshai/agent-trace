@@ -153,7 +153,7 @@ node src/cli.ts read --db .agent-trace/demo.sqlite --event EVENT_ID --view conte
 node src/cli.ts ingest --source /absolute/path/to/selected-rollout.jsonl --instance workstation-a --project project-a --capture content --db .agent-trace/pilot.sqlite
 ```
 
-路径是待替换的示例，不会自动查找 `CODEX_HOME`。可重复使用 `--source` 指定多个文件或明确目录；目录递归接收 `.jsonl`，跳过符号链接。单文件大小上限 128 MiB，来源文件数上限 10000。
+路径是待替换的示例，不会自动查找 `CODEX_HOME` 或 `~/.dsh`。可重复使用 `--source` 指定多个文件或明确目录；目录递归接收 `.jsonl`、`.jsonl.zstd`（DeepSeek Harness，运行时 `dsh`）和 `.jsonl.zst`，跳过符号链接。单文件大小上限 128 MiB，dsh 解码后上限 256 MiB，来源文件数上限 10000。
 
 在多项目目录上运行一次命令会把所有导入会话绑定到该次 `--project`，因此应按项目分次选择来源。Agent Knowledge 配置的 `allowed_project_ids` 必须覆盖导出页内全部项目，否则整页拒绝；当前没有按项目过滤导出流。试点可按授权范围创建独立归档库。
 
@@ -180,9 +180,9 @@ node src/cli.ts delete-session --db .agent-trace/demo.sqlite --runtime pi --inst
 | `SOURCE_CONFLICT` | 同会话被归到另一个项目 | 核对项目/实例和 cwd 配置；勿仅靠换实例绕过，以免重复统计 |
 | `SESSION_DELETED` | 同身份已显式删除 | 停止重导；确认是否需要另行规划恢复 |
 | `COLLECTION_LOCKED` | 同一归档已有采集进程持有有效租约 | 检查现有 `serve`；不要强抢运行中的租约，等它停止或租约过期 |
-| `INVALID_RECORD` | 完整行不是受支持的 Codex/pi JSON 记录 | 核对来源格式；该文件本次事件未提交 |
+| `INVALID_RECORD` | 完整行不是受支持的 Codex/pi/dsh JSON 记录 | 核对来源格式；该文件本次事件未提交 |
 | `RUNTIME_MISMATCH` | 显式 `--runtime` 与实际文件格式不一致 | 去掉 `--runtime` 使用 `auto`，或改正参数 |
-| `pending` 非空 | 文件末尾尚无结束换行 | 等日志写完后再次导入 |
+| `pending` 非空 | 文件末尾尚无结束换行，或 dsh 最后一个 Zstandard 帧未写完整 | 等日志写完后再次导入；已完整的帧会先归档 |
 | `FILE_TOO_LARGE` / `TOO_MANY_SOURCES` | 超过首版采集范围限制 | 缩小所选来源，保留原始事件顺序和身份 |
 | 输出文件已存在 | 导出使用只新建策略 | 使用新文件名，保留原成功页用于可靠重试 |
 | 消费方提示 cursor gap/conflict | 跳页、重叠向前页或同页内容变化 | 重试原成功页恢复游标，再从该游标重新导出 |

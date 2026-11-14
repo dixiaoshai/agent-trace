@@ -1,9 +1,10 @@
 # Shared agent archive protocol v1
 
-Status: first local implementation. Codex and pi adapters are implemented;
-deepseek-harness remains a future adapter. No packages, hooks or runtime
-integrations are installed by the agent's own installer; Trace reads the JSONL
-files the harness already writes.
+Status: first local implementation. Codex, pi and DeepSeek Harness (`dsh`)
+adapters are implemented. No packages, hooks or runtime integrations are
+installed by the agent's own installer; Trace reads the session files the
+harness already writes. Dsh current logs are concatenated Zstandard frames and
+are decoded to logical JSONL before parsing.
 
 ## Ownership and transport
 
@@ -216,12 +217,65 @@ header timestamp so inherited history is not billed twice. A session is named by
 the first readable user prompt, matching pi's own session selector. Both are
 exposed as `session.started.data.title` (single line, max 80 characters).
 
+## Dsh adapter mapping
+
+Dsh stores a session header plus an append-only `SessionEvent` log. Current
+releases write `session.vN.jsonl.zstd` under `~/.dsh/sessions/--<cwd>--/<id>/`;
+the file is a concatenation of independent Zstandard frames (one header frame,
+then one frame per durable batch). The adapter decodes complete frames in order,
+marks a torn final frame pending, and keeps logical line numbers and record
+hashes. Both the current v4 layout and still-readable v0 logs share the event
+fields used below; stream delta rows (`assistant/chunk`, `*-chunks`), inbox
+slices and internal job records remain `source.unknown` evidence and never
+create extra turns.
+
+| Dsh event | v1 kind |
+|---|---|
+| `session` header | `session.started` (`created_at` from `createdAt`; `parent_session_id` from `parentSession` when `origin` is `subagent`, else `forked_from_session_id` from `parentSession`) |
+| `turn/start` / `turn/end` | `turn.started` / `turn.completed` or `turn.interrupted` |
+| `user/message` with `source.kind=user` | `message.user` plus a bounded title |
+| other `user/message`, `system/message` | `source.unknown` |
+| `assistant/message` | `message.assistant` + `reasoning.summary` for visible reasoning + `usage.snapshot` |
+| `tool/call` / `tool/result` | `tool.called` / `tool.returned` |
+| `compaction/summary` | `context.compacted` (+ summarizer `usage.snapshot`) |
+| everything else | `source.unknown` |
+
+A dsh session header classifies itself with optional fields: `origin` is only
+ever `subagent`, and a subagent's `parentSession` is its direct creator
+(`parent_session_id`), not a fork source; ordinary forks omit `parentSession`,
+while historical ordinary forks may retain it there (recorded as
+`forked_from_session_id`). Seeded sessions (`isSeeded: true`) begin with a
+verbatim copy of the parent log's prefix, closed by a `session/end-seed` record
+carrying `inherited: true`; records through that last marker already exist under
+the parent session and are not normalized again under the child, so inherited
+work is not counted twice.
+
+A turn id is the native numeric `data.turn` rendered as a string. Usage follows
+the same v1 input convention as pi:
+
+| Dsh TokenUsage | v1 |
+|---|---|
+| `inputTokens` + `cacheReadTokens` | `input_tokens` |
+| `cacheReadTokens` | `cached_input_tokens` |
+| `cacheWriteTokens` | `cache_write_input_tokens` |
+| `outputTokens` | `output_tokens` |
+| `reasoningTokens` | `reasoning_output_tokens` (already inside output; never added again) |
+| `totalTokens` | `total_tokens` |
+
+Dsh does not record a request cost in the session log, so `cost_usd` and
+`cost_source` are absent rather than zero. Event identity is
+`SHA256(JSON.stringify([runtime, instance_id, session_id, seq-or-line, kind]))`;
+several normalized events from one source row share the row and are
+distinguished by kind. `session/title` supplies the display title, with the
+first direct user prompt as fallback.
+
 ## Storage and deletion
 
 SQLite is the sole initial archive writer and stores content transactionally with
 the normalized event. Only complete LF-terminated records are accepted; incomplete
-tails are reported as pending and retried. Malformed complete records fail that
-file import atomically. File size is bounded. Repeated scans currently reread
+tails are reported as pending and retried. Dsh compressed sources additionally
+accept complete Zstandard frames when the final frame is torn. Malformed complete
+records fail that file import atomically. File and decoded size are bounded. Repeated scans currently reread
 selected files; event deduplication and consumer exports are incremental, but
 byte-offset tailing is deferred. Global/session ordering is preserved; no global
 wall-clock ordering across independent runtimes is claimed.
@@ -250,7 +304,7 @@ audit. New consumers see tombstones even when prior events were removed.
 
 ## First acceptance criteria
 
-- Synthetic Codex and pi import, duplicate import and moved-copy import produce no doubles.
+- Synthetic Codex, pi and dsh import, duplicate import and moved-copy import produce no doubles.
 - Incomplete tails resume; malformed records/conflicting rewrites do not partially commit.
 - Content is absent from metadata export and statistics storage.
 - Both consumers resume independently and reject gaps/conflicts/unsupported versions.

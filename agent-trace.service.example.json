@@ -16,6 +16,17 @@
             "cwd_allowlist": ["/absolute/path/to/project-a"]
           }
         ]
+      },
+      {
+        "instance_id": "workstation-a",
+        "runtime": "dsh",
+        "root": "/absolute/path/to/.dsh/sessions",
+        "projects": [
+          {
+            "project_id": "project-a",
+            "cwd_allowlist": ["/absolute/path/to/project-a"]
+          }
+        ]
       }
     ]
   },

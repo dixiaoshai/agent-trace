@@ -4,12 +4,12 @@
 
 ## 已确认的方向
 
-1. 本阶段不用 hook，只接 Codex 持久日志的扫描采集。
+1. 本阶段不用 hook，只扫描 Codex、pi 与 dsh 已写入的持久日志。
 2. Trace 常驻采集和归档，提供统一的本机只读事件接口。
 3. Stats 和 Knowledge 在各自项目实现自动同步任务，主动拉取 Trace。
 4. 同步进度、重试和错误状态由各消费方维护；Trace 不维护目标消费方清单、投递队列或确认游标，不启动它们的命令或进程。
 5. 保留现有 CLI 文件导出/导入方式和 v1 事件协议。
-6. pi、deepseek-harness、hook、自动经验提取、团队服务和新 UI 均不在本阶段范围。
+6. hook、自动经验提取、团队服务和新 UI 均不在本阶段范围；pi 与 dsh 适配器已在后续阶段接入。
 
 这取代了此前讨论中的“Trace 向两个项目自动推送”设想。Trace 的采集任务可以独立运行；Stats 的同步无需打开看板，Knowledge 的同步无需保持 MCP 客户端连接。
 
@@ -30,20 +30,41 @@
 
 ```mermaid
 flowchart TD
-    L[已授权 Codex 日志范围] --> P[Trace 扫描循环]
-    P --> T[(Trace 事件归档)]
-    T --> API[本机只读分页 API]
-    S[Stats 同步 worker] -->|GET metadata 页| API
-    S --> SD[(Stats 元数据、统计、游标)]
-    SD --> SW[Stats 看板]
-    K[Knowledge 同步 worker] -->|GET content 页| API
-    K --> KE[(Knowledge 执行证据、游标)]
+    L[已授权日志范围] --> PM[Trace metadata 扫描]
+    L --> PC[Trace content 扫描]
+    PM --> TM[(metadata 归档<br/>标题、路径、结构、用量)]
+    PC --> TC[(content 归档 + blob<br/>仅选定来源的正文)]
+    TM --> AM[metadata API<br/>例如 127.0.0.1:18766]
+    TC --> AC[content API<br/>例如 127.0.0.1:18767]
+    S[Stats follow worker] -->|GET metadata 页| AM
+    S --> SD[(Stats 统计库、游标、租约)]
+    SD --> SW[Stats 看板 serve]
+    SW -.按需只读.-> TC
+    K[Knowledge follow worker] -->|GET content 页| AC
+    K --> KE[(Knowledge 执行证据、游标、租约)]
     DOC[明确选择的文档与代码] --> KK[(Knowledge 知识记录)]
     KE --> MCP[Knowledge CLI / MCP 查询]
     KK --> MCP
 ```
 
-Trace 只依赖来源配置和自身存储，不导入 Stats 的 Python 实现、不调用 Knowledge CLI、不要求两个消费方启动。消费方只依赖公开协议，不读 Trace 内部表。统一启动脚本若后续添加，只做进程编排，不把跨项目业务依赖塞回 Trace。
+常驻角色按“一个配置/数据库对应一个归档”拆分，不是重复进程：
+
+| 角色 | 配置与数据 | 职责 |
+|---|---|---|
+| Trace metadata `serve` | `service.json` + metadata SQLite | 宽范围采集元数据，供 Stats 统计 |
+| Trace content `serve` | `content.json` + content SQLite + blob | 窄范围采集选定正文，供 Knowledge 与按需正文查看 |
+| Stats `follow` | `stats.follow.json` + Stats SQLite | 唯一的元数据写入者，维护游标和单 worker 租约 |
+| Stats 看板 `serve` | Stats SQLite，按需只读 content 归档 | 只读 HTTP 看板；不采集、不推进游标 |
+| Knowledge `follow` | `content.follow.json` + 证据 SQLite | 唯一的证据写入者，维护游标和租约 |
+
+拆分原因：
+
+- Trace 的 `capture_mode` 在数据库创建后固定，metadata 与 content 必须使用不同数据库。两者使用不同配置、API 端口/token 和项目范围，可以分别启停、审计和重建。
+- metadata 范围可以较宽，但只有结构、标题、路径和用量；content 保存请求、回答、工具参数/输出和可见推理，必须限定明确项目。Stats 只消费 metadata，正文不会写入统计库。
+- Stats 的 `follow` 与看板分离：worker 独占写入和同步租约，看板只读。看板重启不会丢游标，worker 也能在不打开看板时独立运行，故障边界清楚。
+- Knowledge 没有常驻看板，只在需要时通过 CLI/MCP 读取；常驻部分只需要 content follow worker。
+
+同一个归档数据库只允许一个采集租约，因此不要用同一份配置启动两个 `serve`。不同数据库/配置的 metadata 与 content 进程可以同时运行。统一启动脚本若后续添加，只做进程编排，不合并数据库、不共享租约，也不把跨项目业务依赖塞回 Trace。
 
 当前存储仍按四类 SQLite 文件划分：Trace 原始事件库、Stats 统计库、Knowledge 知识库、Knowledge 证据库。同步数据进入各自已有投影库；不能为了自动同步绕过项目授权或把执行证据自动升级为确认知识。
 

@@ -310,3 +310,33 @@ rm -f  ~/.local/share/agent-knowledge/pilot.sqlite* ~/.local/share/agent-knowled
 - 改动只影响**新采集**的事件；已入库的历史事件保留当时写入的标记，不回填、不重写。需要一致视图时用新库重新回补。
 - 规则仍是启发式：纯小写且无分隔符的裸方案值（如 `Bearer abcdefghijklmnop`）不再命中裸规则（显式头仍命中）；结构化敏感键不覆盖复数键名。
 - 没有做真实密钥样本的漏检率测量（不允许主动注入真实密钥）；以上对比只基于既有日志中可枚举的形态。
+
+## Dsh 子代理归属修复（2026-11-15）
+
+问题：dsh 子代理会话在 Trace 中一律写成 `parent_session_id: null`，header 的 `parentSession` 只写进 `forked_from_session_id`，Agent Stats 因而把每个子代理当成独立顶层会话（在 8765 看板的「各轮明细」截图复现）。
+
+### 适配规则变化（`src/dsh.ts`）
+
+- header 可选字段 `origin` 取值为 `subagent` 时是子代理判据；其 `parentSession` 写入 `parent_session_id`，不再写 `forked_from_session_id`。
+- 非子代理会话的 `parentSession` 仍按历史 fork 写 `forked_from_session_id`；普通会话两者都为 null。
+- `isSeeded: true` 会话按最后一个 `session/end-seed`（`data.inherited === true`）剔除继承前缀：这些记录已存在于父会话日志中，重复归一化会重复计量；无 marker 时保持原行为。
+- 事件词汇、事件身份、用量合成和 content 捕获不变。
+
+### 验证
+
+- `node --test tests/dsh.test.ts` 6 项通过（子代理、seeded fork、seeded 子代理、普通会话、解码、content）；`npm test` 65 项通过；`npm run typecheck` 无错误。
+- 真实日志只读端到端：`~/.dsh/sessions` 61 个会话文件 → 全新 Trace 归档 → 全量 metadata 导出（19,155 事件）→ 全新 Stats 投影：61 个会话（28 个顶层 + 33 个子代理，33 个全部命中父会话）、87 轮（其中 34 个子代理轮）。seeded 子代理只剩自身轮次（如 `6652158e…` 仅 turn 2，22,081 token，不再复制父会话 turn 1）。
+- Agent Stats 页面：会话视图子代理缩进嵌套在父会话下、父行显示“N 个子代理”，根会话 badge 显示 DSH；轮次视图保持“子代理 + 所属父轮次未知”，不按时间猜测父轮次。
+
+### 影响与限制
+
+- 与脱敏修复相同：已入库事件不自动重写，同一源文件再次导入会按 `record_hash` 跳过。需要一致的既有视图时，应重建 Trace 归档并用新归档重建下游投影。
+- dsh 日志没有父轮次身份（子会话 header 只有父会话），因此只能在**会话级**归属子代理；轮次级归属保持未知。
+
+### 正式派生库重建（2026-11-15）
+
+用户确认后就地重建本机派生库（源日志与 content 归档不动），备份保留为 `trace.sqlite.bak-dshparent-20261115020532`、`stats.sqlite3.bak-dshparent-20261115020532`：
+
+- 停止三个 LaunchAgent → 新 Trace 归档（`archive_id 9786e926…`）backfill `all`：477 个源文件、68,167 事件、0 错误、0 pending，dsh 会话 61 个（28 顶层 + 33 子代理，全部带 `parent_session_id`）。
+- 新 Stats 统计库由 follow 从游标 0 重建并追平（cursor 68,229），随后重启 8765 看板：`/api/overview?source=dsh` 显示 61 个会话、33 个带父会话、11 个父会话共 33 个子代理；页面会话视图父行显示“N 个子代理”并缩进嵌套。
+- 复核：Trace 采集保持 idle、扫描 `errors=0`，三个服务均为 running；旧库备份保留在各自数据目录，可按需回滚。

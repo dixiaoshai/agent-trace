@@ -9,13 +9,27 @@ import {
 import {
   detectRuntime, normalize as normalizePi, parseRecords as parsePiRecords, sessionCwd as piSessionCwd,
 } from './pi.ts';
+import {
+  isZstdSource, decodeZstdSource, normalize as normalizeDsh,
+  parseRecords as parseDshRecords, sessionCwd as dshSessionCwd,
+} from './dsh.ts';
 import type { TitleLookup } from './titles.ts';
 import {
   ArchiveError, cursorOf, hash, identifier, timestamp, viewOf,
-  type ArchiveStatus, type Batch, type Event, type RuntimeHint, type View,
+  type ArchiveStatus, type Batch, type Event, type JsonObject, type RuntimeHint, type View,
 } from './types.ts';
 
 const MAX_FILE_BYTES = 128 * 1024 * 1024;
+
+/** Source rows use ISO timestamps (Codex/pi) or epoch milliseconds (dsh). */
+function sourceRevisionStamp(row: JsonObject): string | null {
+  const value = row.timestamp ?? row.time ?? row.createdAt;
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  }
+  return timestamp(value);
+}
 
 export interface BlobPruneResult {
   directory: string;
@@ -94,29 +108,48 @@ export class Archive {
     // Bound the read even if the source grows between stat and read.
     const buffer = readFileSync(absolutePath);
     if (buffer.length > MAX_FILE_BYTES) throw new ArchiveError('FILE_TOO_LARGE', 'Source exceeds 128 MiB');
-    const input = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+    // Dsh current logs are concatenated Zstandard frames; the logical JSONL is
+    // decoded first so runtime detection and source lines describe the same
+    // append-only sequence the harness itself reads.
+    let input: string;
+    let framePending = false;
+    if (isZstdSource(buffer)) {
+      const decoded = decodeZstdSource(buffer);
+      input = decoded.text;
+      framePending = decoded.pending;
+    } else {
+      input = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+    }
     // Empty selected files stay a no-op rather than a runtime-detection error.
-    if (!input.trim()) return { imported: 0, skipped: 0, pending: false };
+    if (!input.trim()) return { imported: 0, skipped: 0, pending: framePending };
     const detected = detectRuntime(input);
     if (runtimeHint !== 'auto' && runtimeHint !== detected) {
       throw new ArchiveError('RUNTIME_MISMATCH', `Source is a ${detected} session, but ${runtimeHint} was selected`);
     }
     const runtime = detected;
-    const { records, pending } = runtime === 'pi' ? parsePiRecords(input) : parseRecords(input);
+    const parsed = runtime === 'pi'
+      ? parsePiRecords(input)
+      : runtime === 'dsh' ? parseDshRecords(input) : parseRecords(input);
+    const { records } = parsed;
+    const pending = parsed.pending || framePending;
     if (!records.length) return { imported: 0, skipped: 0, pending };
     let projectId: string;
     if (typeof project === 'function') {
       // Missing session identity is a malformed source, not a project mismatch;
       // keep it retryable as an error instead of silently baselining it. The
       // Codex helper reads the final resume/subagent identity, matching
-      // normalize(); the pi helper reads the session header.
-      const cwd = runtime === 'pi' ? piSessionCwd(records) : codexSessionCwd(records);
+      // normalize(); pi and dsh read their session headers.
+      const cwd = runtime === 'pi'
+        ? piSessionCwd(records)
+        : runtime === 'dsh' ? dshSessionCwd(records) : codexSessionCwd(records);
       projectId = project(cwd);
       identifier(projectId, 'project ID');
     } else projectId = project;
     const normalized = runtime === 'pi'
       ? normalizePi(records, absolutePath, instanceId, projectId, this.captureMode)
-      : normalize(records, absolutePath, instanceId, projectId, this.captureMode, titles);
+      : runtime === 'dsh'
+        ? normalizeDsh(records, absolutePath, instanceId, projectId, this.captureMode)
+        : normalize(records, absolutePath, instanceId, projectId, this.captureMode, titles);
     // Content protection runs before the archive transaction: a blob write
     // failure aborts the import instead of committing an unprotected event.
     // Every written path is tracked so a discarded revision (older rollout,
@@ -144,7 +177,7 @@ export class Archive {
     // copies stay idempotent and cumulative usage is never merged across
     // revisions.
     const revisionAt = records.reduce((max, record) => {
-      const stamp = timestamp(record.row.timestamp) ?? '';
+      const stamp = sourceRevisionStamp(record.row) ?? '';
       return stamp > max ? stamp : max;
     }, '');
     const rank = { revision_at: revisionAt, event_count: records.length };
@@ -330,7 +363,9 @@ export function sourceFiles(roots: string[]): string[] {
   function visit(name: string): void {
     const stat = lstatSync(name);
     if (stat.isSymbolicLink()) return;
-    if (stat.isFile()) { if (name.endsWith('.jsonl')) files.add(name); }
+    if (stat.isFile()) {
+      if (name.endsWith('.jsonl') || name.endsWith('.jsonl.zstd') || name.endsWith('.jsonl.zst')) files.add(name);
+    }
     else if (stat.isDirectory()) for (const entry of readdirSync(name).sort()) visit(path.join(name, entry));
     if (files.size > 10000) throw new ArchiveError('TOO_MANY_SOURCES', 'More than 10000 files selected');
   }

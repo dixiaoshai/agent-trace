@@ -39,6 +39,13 @@
 | 键值/JSON 字段 | `password=...`、`"token": "..."`、`api_key: ...` |
 | 结构化敏感键 | `{"password": "..."}`、`{"GITHUB_TOKEN": "..."}` |
 
+过匹配抑制（2026-11-14）：
+
+- 裸方案词（`Bearer`/`Basic`/`Digest`/`Token`）后的值必须像凭据：含数字、≥12 位且大小写混用、或 ≥24 位且带分隔符。`basic instructions`、`Digest algorithm`、`Token coverage`、`Basic category.` 因此保持原文。
+- 显式 `Authorization: <scheme> …` 头仍按原文替换，不要求值形态。
+- 键值规则只匹配显式单数键名（`token`、`password`、`client_secret` 等），不再把 `tokens`/`js-tokens`/`fewer tokens:` 这类复数或复合词当敏感键；`$OPENAI_API_KEY`、`<your token>`、`{placeholder}`、`^7.29.7` 这类引用/占位符也不替换。
+- 代价：纯小写字母且无分隔符的裸方案值是漏检面（仍会被显式头规则或具体 token 形态规则覆盖）；结构化敏感键不覆盖复数键名（`{"tokens": 10000}` 不会被整值替换）。
+
 限制：
 
 - 规则只覆盖常见形态。自由散文、代码片段、私有格式和拆分拼接的密钥仍可能漏检。

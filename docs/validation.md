@@ -276,3 +276,37 @@ rm -f  ~/.local/share/agent-knowledge/pilot.sqlite* ~/.local/share/agent-knowled
 - 未做真实 `kill -9` / 断电留下的孤儿回收演练；`gc` 只在已有 75 个真实孤儿上验证过。
 - 未修脱敏过匹配（`Basic/Digest/Token` + 普通单词），也未做 reviewer 独立复审。
 - Knowledge 侧未安装 MCP/skill 接入，仍只有 `follow` 与 CLI 检索。
+
+## 脱敏过匹配修复（2026-11-14）
+
+试点发现两类过匹配（散文被替换成 `[REDACTED:credential]`、计数与占位符被当成 `secret`）。本次按“保留真实命中、抑制可证明的误报”修改 `src/content.ts`，并对比了真实数据上的前后差异。
+
+### 规则变化
+
+- 裸方案词（`Bearer`/`Basic`/`Digest`/`Token`）后的值必须像凭据：含数字；或 ≥12 位且大小写混用（≥2 大写、≥2 小写，覆盖 base64）；或 ≥24 位且带 `.`/`_`/`~`/`+`/`-`。尾部句读标点先去掉再判断。
+- 显式 `Authorization: <scheme> <value>` 头保持无条件替换。
+- 键值文本规则只匹配显式单数键名（去掉旧规则的 `s?`），`tokens:`/`js-tokens:` 不再命中；值以 `$`（变量引用）、`<`（占位符）、`{`（对象占位）、`^`/`~`（版本范围）开头时跳过。
+- 结构化敏感键规则未改（它本来就只匹配单数键名与明确键名）。
+
+### 真实数据对比
+
+对 content 归档里 87 个已导入源文件（25,407 行）用旧规则与新规则各跑一遍：
+
+| 指标 | 旧规则 | 新规则 |
+| --- | --- | --- |
+| 标记总数 | 2,030 | 1,165 |
+| 差异行 | — | 440 |
+
+- 少掉的 865 处标记，逐条枚举后全部是散文、计数与占位符：`instructions`（260）、`efficiency`（25）、`algorithm`（19）、`template`（14）、`authentication`（14）、`reference`（13）、`categories`、`coverage`、`Activity`、`credentials`、`Optimizer`、`category.`、`--use-mock-keychain`、`tokens: memory`、`"tokens": 10000`、`$OPENAI_API_KEY`、`<your token>`、`"js-tokens": "^7.29.7"` 等。
+- 保留的裸方案值全部是凭据形态：`synthetic-bearer-token-value`（合成测试串，带分隔符且 ≥24）、`dXNlcjpwYXNz`（base64）、`smoke-token-123`、`12345678` 等。
+- 未发现“应该保留的真实密钥被新规则漏掉”的样本；具体 token 形态（`ghp_`、`sk-`、`AKIA`、JWT、私钥、URL 凭据）走独立规则，未受影响。
+
+### 回归
+
+`npm run check`：类型检查、59 项测试和构建通过。`redactText` 用例新增：散文（`basic instructions`、`digest algorithm`、`Token usage`）、复数键（`80% fewer tokens: memory`、`"js-tokens": "^7.29.7"`）、引用与占位符（`$OPENAI_API_KEY`、`<your token>`、`{placeholder}`）保持原文；凭据形态（`Bearer dXNlcjpwYXNz`、`Bearer smoke-token-123.`、`secret: 5f4d…`）仍被替换；显式 `Authorization:` 头仍严格替换。
+
+### 影响与限制
+
+- 改动只影响**新采集**的事件；已入库的历史事件保留当时写入的标记，不回填、不重写。需要一致视图时用新库重新回补。
+- 规则仍是启发式：纯小写且无分隔符的裸方案值（如 `Bearer abcdefghijklmnop`）不再命中裸规则（显式头仍命中）；结构化敏感键不覆盖复数键名。
+- 没有做真实密钥样本的漏检率测量（不允许主动注入真实密钥）；以上对比只基于既有日志中可枚举的形态。

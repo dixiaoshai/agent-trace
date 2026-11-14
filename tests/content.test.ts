@@ -153,6 +153,28 @@ test('redaction helpers cover common secret forms without breaking ordinary text
   );
   // Redaction is stable if it runs twice (markers do not grow).
   assert.equal(redactText(redactText(`x ${OPENAI_KEY}`)), redactText(`x ${OPENAI_KEY}`));
+  // Prose that merely starts with a scheme word is not a credential.
+  assert.equal(redactText('basic instructions'), 'basic instructions');
+  assert.equal(redactText('Basic authentication is supported'), 'Basic authentication is supported');
+  assert.equal(redactText('digest algorithm'), 'digest algorithm');
+  assert.equal(redactText('Token usage is billed'), 'Token usage is billed');
+  assert.equal(redactText('80% fewer tokens: memory means your agent'), '80% fewer tokens: memory means your agent');
+  assert.equal(redactText('"js-tokens": "^7.29.7",'), '"js-tokens": "^7.29.7",');
+  // Placeholders and variable references are not secrets.
+  assert.equal(redactText('Authorization: $OPENAI_API_KEY'), 'Authorization: $OPENAI_API_KEY');
+  assert.equal(redactText('TOKEN=<your token>'), 'TOKEN=<your token>');
+  assert.equal(redactText('token: {placeholder}'), 'token: {placeholder}');
+  assert.equal(redactText('Basic category.'), 'Basic category.');
+  assert.equal(redactText('Bearer --use-mock-keychain'), 'Bearer --use-mock-keychain');
+  // Credential-shaped values stay redacted (a trailing sentence dot is consumed).
+  assert.equal(redactText('Bearer smoke-token-123.'), '[REDACTED:credential]');
+  // The explicit Authorization header form stays strict, even for word-like values.
+  assert.equal(redactText('Authorization: Bearer instructions'), 'Authorization: [REDACTED:credential]');
+  assert.equal(redactText('Authorization: Bearer smoke-token-123'), 'Authorization: [REDACTED:credential]');
+  // Credential-shaped scheme values are still redacted, including pure mixed-case base64.
+  assert.equal(redactText('Bearer dXNlcjpwYXNz'), '[REDACTED:credential]');
+  assert.equal(redactText('curl -H "Authorization: Bearer synthetic-bearer-token-value"'), 'curl -H "Authorization: [REDACTED:credential]"');
+  assert.equal(redactText('secret: 5f4dcc3b5aa765d61d8327deb882cf99'), 'secret: [REDACTED:secret]');
 });
 
 test('content configuration validates inline limits and resolves blob paths', t => {

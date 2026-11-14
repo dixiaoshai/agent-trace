@@ -51,14 +51,34 @@ export interface ContentRef {
 }
 
 /**
+ * Field names whose *value* is treated as a credential. This is an explicit
+ * list on purpose: a generic `*token` suffix would rewrite package names such
+ * as `js-tokens` and prose such as "fewer tokens:".
+ */
+const SECRET_KEY =
+  String.raw`api[_-]?key|apikey|access[_-]?key|secret[_-]?key|client[_-]?secret|private[_-]?key|` +
+  String.raw`password|passwd|pwd|token|access[_-]?token|auth[_-]?token|refresh[_-]?token|` +
+  String.raw`id[_-]?token|authorization|credential|secret`;
+const KEY = String.raw`(\b(?:${SECRET_KEY})\b["']?\s*[:=]\s*)`;
+
+/** Quoted values are redacted unless they only reference a secret or a placeholder. */
+const QUOTED = String.raw`(?!\[REDACTED:)"(?!\$|<|\{|\^|~)[^"\n]{1,4096}"`;
+/** Plain values must not look like a reference/placeholder and are bounded. */
+const PLAIN = String.raw`(?!\[REDACTED:)(?!["'$<{])([^\s,;&}\]\n]{4,4096})`;
+
+/**
  * Credential shapes that are safe to recognize without unbounded backtracking.
  * The replacement text names the class of secret so reviewers can tell a real
  * redaction from missing content.
  */
-const RULES: ReadonlyArray<readonly [RegExp, string]> = [
+type Replacement = string | ((match: string, ...groups: string[]) => string);
+const RULES: ReadonlyArray<readonly [RegExp, Replacement]> = [
   [/-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----[\s\S]{0,65536}?-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----/g, '[REDACTED:private_key]'],
   [/(\b(?:proxy-)?authorization\s*:\s*)(?:bearer|basic|digest|token)\s+[A-Za-z0-9._~+/-]{8,}={0,2}/gi, '$1[REDACTED:credential]'],
-  [/\b(?:Bearer|Basic|Digest|Token)\s+[A-Za-z0-9._~+/-]{8,}={0,2}/gi, '[REDACTED:credential]'],
+  // A bare scheme word ("Basic", "Digest", "Token") also starts ordinary prose
+  // such as "basic instructions", so the value itself must look credential-ish.
+  [/\b(?:Bearer|Basic|Digest|Token)\s+([A-Za-z0-9._~+/-]{8,}={0,2})/gi,
+    (match, value) => (looksLikeCredential(value ?? '') ? '[REDACTED:credential]' : match)],
   [/\b(?:sk|rk|pk)-[A-Za-z0-9_-]{16,}/g, '[REDACTED:api_key]'],
   [/\bgh[pousr]_[A-Za-z0-9]{20,}/g, '[REDACTED:github_token]'],
   [/\bgithub_pat_[A-Za-z0-9_]{20,}/g, '[REDACTED:github_token]'],
@@ -69,26 +89,38 @@ const RULES: ReadonlyArray<readonly [RegExp, string]> = [
   [/\bglpat-[A-Za-z0-9_-]{20,}/g, '[REDACTED:gitlab_token]'],
   [/\bnpm_[A-Za-z0-9]{30,}/g, '[REDACTED:npm_token]'],
   [/\b([a-z][a-z0-9+.-]{0,32}:\/\/)[^\s/@:]{1,128}:[^\s/@]{1,128}@/gi, '$1[REDACTED:userinfo]@'],
-  [
-    /(\b(?:api[_-]?key|apikey|access[_-]?key|secret[_-]?key|client[_-]?secret|private[_-]?key|password|passwd|pwd|token|access[_-]?token|auth[_-]?token|refresh[_-]?token|id[_-]?token|authorization|credential|secret)s?\b["']?\s*[:=]\s*)(?!\[REDACTED:)"[^"\n]{1,4096}"/gi,
-    '$1"[REDACTED:secret]"',
-  ],
-  [
-    /(\b(?:api[_-]?key|apikey|access[_-]?key|secret[_-]?key|client[_-]?secret|private[_-]?key|password|passwd|pwd|token|access[_-]?token|auth[_-]?token|refresh[_-]?token|id[_-]?token|authorization|credential|secret)s?\b["']?\s*[:=]\s*)(?!\[REDACTED:)'[^'\n]{1,4096}'/gi,
-    "$1'[REDACTED:secret]'",
-  ],
-  [
-    /(\b(?:api[_-]?key|apikey|access[_-]?key|secret[_-]?key|client[_-]?secret|private[_-]?key|password|passwd|pwd|token|access[_-]?token|auth[_-]?token|refresh[_-]?token|id[_-]?token|authorization|credential|secret)s?\b["']?\s*[:=]\s*)(?!\[REDACTED:)(?!["'])([^\s,;&}\]\n]{4,4096})/gi,
-    '$1[REDACTED:secret]',
-  ],
+  [new RegExp(`${KEY}${QUOTED}`, 'gi'), '$1"[REDACTED:secret]"'],
+  [new RegExp(`${KEY}(?!\\[REDACTED:)'[^'\\n]{1,4096}'`, 'gi'), "$1'[REDACTED:secret]'"],
+  [new RegExp(`${KEY}${PLAIN}`, 'gi'), '$1[REDACTED:secret]'],
 ];
+
+/**
+ * Does a scheme value look like a token rather than an English word? Real
+ * tokens carry digits, separators or mixed case; "instructions", "authentication"
+ * and "algorithm" do not.
+ */
+function looksLikeCredential(value: string): boolean {
+  const core = value.replace(/[.,;:!?)\]'"]+$/, '').replace(/=+$/, '');
+  if (/\d/.test(core)) return true;
+  // Base64-ish tokens mix case repeatedly; a capitalised English word does not.
+  const upper = (core.match(/[A-Z]/g) ?? []).length;
+  const lower = (core.match(/[a-z]/g) ?? []).length;
+  if (core.length >= 12 && upper >= 2 && lower >= 2) return true;
+  // Long separator-bearing opaque strings (e.g. bearer tokens built from words)
+  // stay redacted; short CLI flags and dotted prose names do not.
+  return /[._~+/-]/.test(core) && core.length >= 24;
+}
 
 /** Replace recognized credential shapes. Pure and idempotent for markers. */
 export function redactText(value: string): string {
   if (!value) return value;
   let out = value;
   for (const [pattern, replacement] of RULES) {
-    try { out = out.replace(pattern, replacement); } catch { /* never let one rule abort capture */ }
+    try {
+      out = typeof replacement === 'string'
+        ? out.replace(pattern, replacement)
+        : out.replace(pattern, replacement as (match: string, ...groups: string[]) => string);
+    } catch { /* never let one rule abort capture */ }
   }
   return out;
 }

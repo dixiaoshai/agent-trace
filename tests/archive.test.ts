@@ -63,7 +63,7 @@ test('partial tail waits for completion and keeps original identity', t => {
   assert.equal(two.imported, 1); assert.equal(two.skipped, 10);
 });
 
-test('malformed complete lines and conflicting source rewrites are atomic', t => {
+test('malformed lines are atomic while in-place rewrites replace changed records', t => {
   const { filename, archive } = setup(t);
   const full = readFileSync(filename, 'utf8');
   writeFileSync(filename, full + '{broken}\n');
@@ -71,9 +71,23 @@ test('malformed complete lines and conflicting source rewrites are atomic', t =>
   assert.equal(archive.exportBatch().events.length, 0);
   writeFileSync(filename, full);
   archive.importFile(filename, 'local', 'demo');
+
+  // Same session, one changed record and one appended record: the newer
+  // revision wins, unchanged events keep their identity, the old record goes.
   writeFileSync(filename, full.replace('task_complete', 'turn_aborted') + '{"type":"future","payload":{}}\n');
-  assert.throws(() => archive.importFile(filename, 'local', 'demo'), /Existing source record changed/);
-  assert.equal(archive.exportBatch().events.length, 11);
+  const rewritten = archive.importFile(filename, 'local', 'demo');
+  assert.equal(rewritten.imported, 2);
+  assert.equal(rewritten.skipped, 10);
+  const events = archive.exportBatch(0, 100, 'metadata').events;
+  assert.equal(events.length, 12);
+  assert.ok(events.some(event => event.kind === 'turn.interrupted'));
+  assert.ok(!events.some(event => event.kind === 'turn.completed'));
+  // An older revision arriving late must not roll the projection back.
+  writeFileSync(filename, full);
+  const older = archive.importFile(filename, 'local', 'demo');
+  assert.equal(older.imported, 0);
+  assert.equal(older.skipped, 11);
+  assert.equal(archive.exportBatch(0, 100, 'metadata').events.length, 12);
   assert.throws(() => archive.importFile(fixture, 'local', 'other-project'), /another project/);
 });
 
@@ -143,4 +157,131 @@ test('default database keeps legacy data accessible and explicit db overrides bo
   assert.notEqual(explicit.archive_id, legacyId);
   assert.notEqual(explicit.archive_id, canonicalId);
   assert.equal(run(['status', '--db', legacyPath]).archive_id, legacyId);
+});
+
+test('resumed and subagent rollouts archive under their final identity', t => {
+  const { dir, archive } = setup(t);
+  const filename = path.join(dir, 'resumed.jsonl');
+  const rows = [
+    { timestamp: '2026-02-01T00:00:00Z', type: 'session_meta', payload: { id: 'first-identity', cwd: '/synthetic/first' } },
+    { timestamp: '2026-02-01T00:00:01Z', type: 'event_msg', payload: { type: 'task_started', turn_id: 'turn-1' } },
+    { timestamp: '2026-02-01T00:00:02Z', type: 'session_meta', payload: { id: 'final-identity', cwd: '/synthetic/final' } },
+    { timestamp: '2026-02-01T00:00:03Z', type: 'turn_context', payload: { turn_id: 'turn-1', model: 'gpt-6.1-sol' } },
+    { timestamp: '2026-02-01T00:00:04Z', type: 'event_msg', payload: { type: 'token_count', turn_id: 'turn-1', info: { total_token_usage: { input_tokens: 10, output_tokens: 2, total_tokens: 12 } } } },
+    { timestamp: '2026-02-01T00:00:05Z', type: 'event_msg', payload: { type: 'task_complete', turn_id: 'turn-1' } },
+  ];
+  writeFileSync(filename, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+  const seen: unknown[] = [];
+  const project = (cwd: unknown): string => { seen.push(cwd); return 'final-project'; };
+  const imported = archive.importFile(filename, 'local', project);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0], '/synthetic/final');
+  const batch = archive.exportBatch(0, 100, 'metadata');
+  const starts = batch.events.filter(event => event.kind === 'session.started');
+  assert.equal(starts.length, 1);
+  assert.equal(starts[0]!.session_id, 'final-identity');
+  assert.equal(starts[0]!.project_id, 'final-project');
+  assert.equal(imported.imported, rows.length - 1);
+  assert.ok(batch.events.every(event => event.session_id === 'final-identity'));
+  // Re-reading the same file is stable: earlier identity markers are not events.
+  assert.equal(archive.importFile(filename, 'local', project).imported, 0);
+});
+
+test('session names decorate the archived start event without changing bytes', t => {
+  const { dir, archive } = setup(t);
+  archive.importFile(fixture, 'local', 'demo', id => id === 'archive-demo-session' ? '  Synthetic   session  ' : null);
+  const events = archive.exportBatch(0, 100, 'metadata').events;
+  const start = events.find(event => event.kind === 'session.started')!;
+  assert.equal(start.data.title, 'Synthetic session');
+  assert.equal(start.body, null);
+  assert.ok(events.every(event => event.body === null && event.raw === null));
+
+  const unnamed = path.join(dir, 'unnamed.jsonl');
+  writeFileSync(unnamed, JSON.stringify({
+    timestamp: '2026-02-02T00:00:00Z',
+    type: 'session_meta',
+    payload: { id: 'unnamed-session', cwd: '/synthetic/demo' },
+  }) + '\n');
+  archive.importFile(unnamed, 'local', 'demo', () => null);
+  const second = archive.exportBatch(0, 200, 'metadata').events
+    .find(event => event.session_id === 'unnamed-session' && event.kind === 'session.started')!;
+  assert.equal(second.data.title, null);
+});
+
+test('overlong session names are bounded before they reach consumers', t => {
+  const { dir, archive } = setup(t);
+  const filename = path.join(dir, 'long-name.jsonl');
+  copyFileSync(fixture, filename);
+  archive.importFile(filename, 'local', 'demo', () => 'y'.repeat(120));
+  const start = archive.exportBatch(0, 100, 'metadata').events.find(event => event.kind === 'session.started')!;
+  assert.equal(Array.from(start.data.title as string).length, 80);
+  assert.ok((start.data.title as string).endsWith('…'));
+});
+
+test('folded rollouts keep distinct event identities and still deduplicate copies', t => {
+  const { dir, archive } = setup(t);
+  const parent = path.join(dir, 'parent.jsonl');
+  const child = path.join(dir, 'child.jsonl');
+  const record = (id: string, kind: string, payload: Record<string, unknown> = {}): string => JSON.stringify({
+    timestamp: '2026-03-01T00:00:00Z',
+    type: kind,
+    payload: { turn_id: 'turn-1', ...payload, ...(kind === 'session_meta' ? { id, cwd: '/synthetic/folded' } : {}) },
+  });
+  writeFileSync(parent, [
+    record('parent-session', 'session_meta'),
+    record('', 'event_msg', { type: 'task_started' }),
+    record('', 'event_msg', { type: 'token_count', info: { total_token_usage: { input_tokens: 100, output_tokens: 10, total_tokens: 110 } } }),
+  ].join('\n') + '\n');
+  // Subagent rollout: its own identity first, the parent identity last.
+  writeFileSync(child, [
+    record('child-session', 'session_meta'),
+    record('parent-session', 'session_meta'),
+    record('', 'event_msg', { type: 'task_started' }),
+    record('', 'event_msg', { type: 'token_count', info: { total_token_usage: { input_tokens: 7, output_tokens: 3, total_tokens: 10 } } }),
+  ].join('\n') + '\n');
+
+  const parentReport = archive.importFile(parent, 'local', 'demo');
+  assert.equal(parentReport.imported, 3);
+  // The child rollout is a newer revision of the same session identity: it
+  // replaces the parent revision instead of merging cumulative snapshots.
+  const childReport = archive.importFile(child, 'local', 'demo');
+  assert.equal(childReport.imported, 3);
+  assert.equal(childReport.skipped, 0);
+  const batch = archive.exportBatch(0, 100, 'metadata');
+  assert.equal(batch.events.length, 3);
+  assert.ok(batch.events.every(event => event.session_id === 'parent-session'));
+  assert.ok(batch.events.every(event => event.source!.series === 'child-session'));
+
+  // A copied child rollout is the same evidence even though its path changed.
+  const copy = path.join(dir, 'child-copy.jsonl');
+  copyFileSync(child, copy);
+  assert.equal(archive.importFile(copy, 'local', 'demo').imported, 0);
+  assert.equal(archive.exportBatch(0, 100, 'metadata').events.length, 3);
+});
+
+test('single-identity logs keep the published v1 event identifier', t => {
+  const { archive } = setup(t);
+  archive.importFile(fixture, 'local', 'demo');
+  const events = archive.exportBatch(0, 100, 'metadata').events;
+  const line = 1;
+  const expected = hash(JSON.stringify(['codex', 'local', 'archive-demo-session', line]));
+  assert.ok(events.some(event => event.event_id === expected));
+});
+
+test('folded events expose the source series used by their identifier', t => {
+  const { dir, archive } = setup(t);
+  const child = path.join(dir, 'series-child.jsonl');
+  writeFileSync(child, [
+    JSON.stringify({ timestamp: '2026-04-01T00:00:00Z', type: 'session_meta', payload: { id: 'child-id', cwd: '/synthetic/series' } }),
+    JSON.stringify({ timestamp: '2026-04-01T00:00:01Z', type: 'session_meta', payload: { id: 'parent-id', cwd: '/synthetic/series' } }),
+    JSON.stringify({ timestamp: '2026-04-01T00:00:02Z', type: 'event_msg', payload: { type: 'task_started', turn_id: 'turn' } }),
+  ].join('\n') + '\n');
+  archive.importFile(child, 'local', 'demo');
+  const events = archive.exportBatch(0, 100, 'metadata').events;
+  const folded = events.find(event => event.kind === 'turn.started')!;
+  assert.equal(folded.source!.series, 'child-id');
+  assert.equal(folded.session_id, 'parent-id');
+  const start = events.find(event => event.kind === 'session.started')!;
+  assert.equal(start.source!.series, 'child-id');
+  assert.equal(start.body, null);
 });

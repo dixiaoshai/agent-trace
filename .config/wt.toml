@@ -1,0 +1,23 @@
+# Worktrunk project hooks — https://worktrunk.dev
+#
+# node_modules/ is copied from an existing worktree via APFS clonefile
+# (seconds, no extra disk until a file changes), so a full `npm ci` per
+# worktree is not needed. Re-run `npm ci` manually after a lockfile change.
+#
+# post-start fires when the branch is created. When adopting an *existing*
+# branch (`wt switch some-old-branch`), run `wt hook post-start` once inside
+# the new worktree to get node_modules.
+
+[[post-start]]
+copy = "wt step copy-ignored"
+
+[[post-start]]
+build = "npm run build"
+
+[pre-merge]
+check = "npm run check"
+
+# The local API server must not share a port across worktrees: `hash_port`
+# maps the branch name to a stable port in 10000-19999.
+# [post-start]
+# server = "wt step tether -- npm run cli -- serve --port {{ branch | hash_port }}"

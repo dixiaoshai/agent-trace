@@ -13,6 +13,7 @@ import {
   type CollectionStatus,
 } from './api.ts';
 import { Archive, sourceFiles } from './store.ts';
+import { readSessionTitles, titleLookup, type TitleLookup } from './titles.ts';
 import { ArchiveError, hash, type JsonObject } from './types.ts';
 
 /**
@@ -399,6 +400,8 @@ export class Collector {
     if (files.length > MAX_SOURCE_FILES) throw new ArchiveError('TOO_MANY_SOURCES', `More than ${MAX_SOURCE_FILES} files selected in ${source.root}`);
     summary.files += files.length;
     const now = this.now();
+    // Names are optional display metadata read beside this source only.
+    const titles = titleLookup(readSessionTitles(source.root));
 
     // backfill=none: the first complete successful discovery only records a
     // baseline. Later new/changed files are imported. The baseline write is
@@ -435,7 +438,7 @@ export class Collector {
             continue;
           }
         }
-        await this.importCandidate(source, key, scopeHash, version, summary);
+        await this.importCandidate(source, key, scopeHash, version, summary, titles);
       } catch (error) {
         if (error instanceof ArchiveError && error.code === 'COLLECTION_LEASE_LOST') throw error;
         const record = errorRecord(error, isoTimestamp(this.now()));
@@ -569,6 +572,7 @@ export class Collector {
     scopeHash: string,
     version: FileVersion,
     summary: CollectionScanSummary,
+    titles?: TitleLookup,
   ): Promise<void> {
     const resolve = (cwd: unknown): string => {
       const match = projectForCwd(source, cwd);
@@ -576,7 +580,7 @@ export class Collector {
       return match.project_id;
     };
     try {
-      const report = this.archive.importFile(version.path, source.instance_id, resolve);
+      const report = this.archive.importFile(version.path, source.instance_id, resolve, titles);
       summary.imported += report.imported;
       summary.skipped += report.skipped;
       if (report.pending) summary.pending++;

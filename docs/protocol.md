@@ -89,14 +89,40 @@ authoritative complete source record. Consumers use `event_id` to cite evidence.
 `runtime` identifies the harness, separate from model provider and model name.
 
 For the Codex v1 adapter, `event_id = SHA256(JSON.stringify([runtime, instance_id,
-session_id, one_based_line_number]))`. Copies/moves retain identity. Reimport of
-the same identity with a different record hash or project ID fails atomically
-with `SOURCE_CONFLICT`; edited/rebased logs require a new source instance and
-explicit downstream handling. Identical content on two DIFFERENT lines is NOT
-deduplicated. Native IDs and parser version are preserved when available; future
-adapters may use native IDs instead of ordinal positions. Event identity must not
-depend on the normalizer version. Unknown records remain `source.unknown` with
-their original native type and raw payload when captured.
+session_id, one_based_line_number]))`. Copies/moves retain identity. Identical
+content on two DIFFERENT lines is NOT deduplicated. Native IDs and parser version
+are preserved when available; future adapters may use native IDs instead of
+ordinal positions. Event identity must not depend on the normalizer version.
+Unknown records remain `source.unknown` with their original native type and raw
+payload when captured.
+
+One session identity can be covered by several rollout files, and Codex can
+rewrite a rollout in place. The archive keeps one revision per session: the
+file with the greatest last event timestamp, then the greatest number of
+records. A newer revision replaces the previous one; an equal revision is
+reconciled in place (changed records are replaced, identical records keep their
+`event_id` and sequence); an older revision is skipped without rollback.
+Project changes for an existing session still fail with `SOURCE_CONFLICT`, and
+consumers see ordinary events with monotonic cursors either way.
+
+A Codex rollout can contain more than one `session_meta`: resuming a conversation
+appends the new identity, and subagent rollouts repeat the parent identity after
+their own. The final record is authoritative; the whole file is archived under
+that `session_id` and project, and earlier identity markers are not emitted.
+This matches the direct-log reader's attribution and keeps tokens with one
+session. Session `title` is optional display metadata read from the source's
+`session_index.jsonl` / newest readable `state_*.sqlite`; it never changes event
+identity, privacy guarantees or cursor semantics.
+
+Two rollouts folded into the same session reuse line numbers while holding
+different records, so such files add their own first `session_meta` identity to
+the identifier tuple: `[runtime, instance_id, session_id, first_session_id,
+line]`, and carry it as the optional `source.series`. Logs with a single
+identity keep the published four-element tuple, so existing identifiers never
+change. The discriminator is stable inside the file and travels with
+copied/moved evidence; identical content at the same position still deduplicates.
+Consumers that recompute identifiers MUST include `source.series` when present
+and reject an empty or session-equal series.
 
 ## Normalized kinds and allowlisted data
 
@@ -104,7 +130,7 @@ All ordinary events include nullable `turn_id`, `root_turn_id`, and `model`.
 
 | Kind | Additional metadata data | Content body |
 |---|---|---|
-| `session.started` | `cwd`, `parent_session_id`, `forked_from_session_id`, `created_at`, `cli_version` | null |
+| `session.started` | `cwd`, `parent_session_id`, `forked_from_session_id`, `created_at`, `cli_version`, optional `title` (single line, max 80 characters, read beside the source) | null |
 | `turn.context` | no additional fields | null |
 | `turn.started` | no additional fields | null |
 | `turn.completed` | no additional fields | optional text |

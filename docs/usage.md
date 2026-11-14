@@ -176,7 +176,7 @@ node src/cli.ts delete-session --db .agent-trace/demo.sqlite --runtime codex --i
 | 错误或现象 | 原因 | 处理 |
 | --- | --- | --- |
 | `CAPTURE_MODE` | 既有库的捕获模式与请求不同 | 核对原库模式；需要不同策略时使用独立试点库并规划消费方接入 |
-| `SOURCE_CONFLICT` | 同会话项目不同，或同一行身份的内容已变化 | 核对项目/实例和源文件是否重写；勿仅靠换实例绕过，以免重复统计 |
+| `SOURCE_CONFLICT` | 同会话被归到另一个项目 | 核对项目/实例和 cwd 配置；勿仅靠换实例绕过，以免重复统计 |
 | `SESSION_DELETED` | 同身份已显式删除 | 停止重导；确认是否需要另行规划恢复 |
 | `COLLECTION_LOCKED` | 同一归档已有采集进程持有有效租约 | 检查现有 `serve`；不要强抢运行中的租约，等它停止或租约过期 |
 | `INVALID_RECORD` | 完整行不是支持的 Codex JSON 记录 | 核对来源格式；该文件本次事件未提交 |

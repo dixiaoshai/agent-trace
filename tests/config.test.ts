@@ -223,6 +223,20 @@ test('checked-in service example stays valid and does not enable collection or t
   assert.deepEqual(config.api.clients.map(client => client.views), [['metadata'], ['content']]);
 });
 
+test('checked-in content example uses a separate database, explicit projects and closed collection', () => {
+  const config = loadServiceConfig(path.resolve('agent-trace.content.example.json'));
+  assert.equal(config.capture_mode, 'content');
+  assert.equal(config.collection.enabled, false);
+  assert.equal(config.api.enabled, false);
+  assert.equal(config.content.max_inline_bytes, 65536);
+  assert.equal(config.content.blob_directory, '/absolute/path/to/content-state/blobs');
+  assert.notEqual(path.basename(config.database), 'trace.sqlite');
+  assert.deepEqual(config.collection.sources.map(source => source.runtime), ['codex', 'codex', 'pi']);
+  const projects = new Set(config.collection.sources.flatMap(source => source.projects.map(project => project.project_id)));
+  assert.deepEqual([...projects].sort(), ['agent-knowledge', 'agent-stats', 'agent-trace']);
+  assert.deepEqual(config.api.clients.map(client => client.views), [['content']]);
+});
+
 test('source runtime defaults to auto and accepts codex or pi explicitly', t => {
   const dir = directory(t);
   const value = validConfig();

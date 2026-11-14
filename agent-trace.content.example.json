@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "database": "/absolute/path/to/content-state/trace-content.sqlite",
+  "capture_mode": "content",
+  "content": {
+    "max_inline_bytes": 65536,
+    "blob_directory": "/absolute/path/to/content-state/blobs"
+  },
+  "collection": {
+    "enabled": false,
+    "scan_interval_seconds": 30,
+    "backfill": "none",
+    "sources": [
+      {
+        "instance_id": "workstation-a",
+        "runtime": "codex",
+        "root": "/absolute/path/to/.codex/sessions",
+        "projects": [
+          {
+            "project_id": "agent-trace",
+            "cwd_allowlist": ["/absolute/path/to/workspace/plugins/agent-trace"]
+          },
+          {
+            "project_id": "agent-stats",
+            "cwd_allowlist": ["/absolute/path/to/workspace/plugins/agent-stats"]
+          },
+          {
+            "project_id": "agent-knowledge",
+            "cwd_allowlist": ["/absolute/path/to/workspace/plugins/agent-knowledge"]
+          }
+        ]
+      },
+      {
+        "instance_id": "workstation-a",
+        "runtime": "codex",
+        "root": "/absolute/path/to/.codex/archived_sessions",
+        "projects": [
+          {
+            "project_id": "agent-trace",
+            "cwd_allowlist": ["/absolute/path/to/workspace/plugins/agent-trace"]
+          },
+          {
+            "project_id": "agent-stats",
+            "cwd_allowlist": ["/absolute/path/to/workspace/plugins/agent-stats"]
+          },
+          {
+            "project_id": "agent-knowledge",
+            "cwd_allowlist": ["/absolute/path/to/workspace/plugins/agent-knowledge"]
+          }
+        ]
+      },
+      {
+        "instance_id": "workstation-a",
+        "runtime": "pi",
+        "root": "/absolute/path/to/.pi/agent/sessions",
+        "projects": [
+          {
+            "project_id": "agent-trace",
+            "cwd_allowlist": ["/absolute/path/to/workspace/plugins/agent-trace"]
+          },
+          {
+            "project_id": "agent-stats",
+            "cwd_allowlist": ["/absolute/path/to/workspace/plugins/agent-stats"]
+          },
+          {
+            "project_id": "agent-knowledge",
+            "cwd_allowlist": ["/absolute/path/to/workspace/plugins/agent-knowledge"]
+          }
+        ]
+      }
+    ]
+  },
+  "api": {
+    "enabled": false,
+    "host": "127.0.0.1",
+    "port": 8767,
+    "clients": [
+      {
+        "id": "agent-knowledge",
+        "views": ["content"],
+        "token_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+      }
+    ]
+  }
+}

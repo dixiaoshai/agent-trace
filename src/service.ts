@@ -1,6 +1,7 @@
 import type { JsonObject } from './types.ts';
 import { ArchiveError } from './types.ts';
 import { Archive } from './store.ts';
+import { redactLog } from './content.ts';
 import { Collector } from './collector.ts';
 import { LocalApiServer } from './server.ts';
 import type { CollectionStatus } from './api.ts';
@@ -38,7 +39,7 @@ export class TraceService {
   constructor(config: ServiceConfig, options: TraceServiceOptions = {}) {
     this.config = config;
     this.options = options;
-    this.archive = new Archive(config.database, config.capture_mode);
+    this.archive = new Archive(config.database, config.capture_mode, config.content);
     this.collector = new Collector(config, this.archive, {
       leaseTtlMs: options.leaseTtlMs,
       now: options.now,
@@ -65,7 +66,9 @@ export class TraceService {
   }
 
   private emit(event: ServiceEvent): void {
-    this.options.onEvent?.(event);
+    // Runtime logs can quote source errors; redact strings defensively so a
+    // credential in a path or message never reaches stdout.
+    this.options.onEvent?.(redactLog(event));
   }
 
   async start(): Promise<void> {

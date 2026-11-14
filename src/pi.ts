@@ -101,6 +101,9 @@ export function detectRuntime(input: string): RuntimeId {
   try { row = object(JSON.parse(first.replace(/\r$/, ''))); } catch { row = null; }
   if (!row) throw new ArchiveError('INVALID_RECORD', 'Source does not start with a JSON object');
   if (row.type === 'session_meta') return 'codex';
+  // Dsh and pi both use a `session` header. Dsh has a numeric format version
+  // plus `createdAt`; pi headers use an ISO `timestamp`.
+  if (row.type === 'session' && typeof row.version === 'number' && typeof row.createdAt === 'number') return 'dsh';
   if (row.type === 'session' && typeof row.id === 'string') return 'pi';
   throw new ArchiveError('INVALID_RECORD', 'Cannot determine source runtime from the first record');
 }

@@ -16,6 +16,8 @@ node src/cli.ts serve --config PATH [--db OVERRIDE.sqlite]
 
 `serve` 在前台运行到 SIGINT/SIGTERM：先校验配置并打开数据库，检查捕获模式；采集开启时获取单归档租约并周期性扫描，API 开启时只监听配置的回环地址。停止时不再调度新扫描、等待当前归档事务结束、关闭监听并释放租约。`collection.enabled` 与 `api.enabled` 都为 `false` 时拒绝启动。启动、扫描、错误和停止事件以 NDJSON 输出到 stdout，不包含 token、正文或原始对象。
 
+一份配置只对应一个归档数据库和一种 `capture_mode`。metadata 与 content 不能共用同一个数据库；需要同时提供两种视图时，分别用 `service.json` 和 `content.json` 启动两个 `serve`。它们可以使用不同端口、token 和项目范围，并可分别启停/重建；同一数据库仍只允许一个采集租约，不要用同一份配置启动两个进程。
+
 成功时输出规范化后的配置 JSON（相对路径已按配置文件目录解析）；`token_sha256` 不会回显。失败时退出码为 1，错误代码为 `INVALID_CONFIG`，消息给出字段路径，例如 `config.collection.sources[0].root: ...`。未知字段一律拒绝，避免拼写错误静默扩大采集范围或访问权限。
 
 示例文件：[agent-trace.service.example.json](../agent-trace.service.example.json)（metadata）与 [agent-trace.content.example.json](../agent-trace.content.example.json)（content 试点，独立库与 blob 目录）。示例默认关闭采集与 API；启用前必须替换占位路径和 token 哈希。`config-check` 通过不代表来源目录已存在或数据库捕获模式匹配，这些在 `serve` 启动时检查。
@@ -92,7 +94,7 @@ node src/cli.ts serve --config PATH [--db OVERRIDE.sqlite]
 | 字段 | 必填 | 规则 |
 | --- | --- | --- |
 | `instance_id` | 是 | 稳定来源实例 ID，写入事件身份；同一安装使用同一值 |
-| `runtime` | 否 | `auto`（默认）、`codex` 或 `pi`。`auto` 按首条记录识别；显式值与实际格式不一致时该文件报 `RUNTIME_MISMATCH` |
+| `runtime` | 否 | `auto`（默认）、`codex`、`pi` 或 `dsh`。`auto` 按首条记录识别；`deepseek-harness` 是 `dsh` 的配置别名并按 `dsh` 保存。显式值与实际格式不一致时该文件报 `RUNTIME_MISMATCH` |
 | `root` | 是 | 文件或目录，递归接收 `.jsonl`；相对路径相对配置文件；不跟随符号链接；单文件上限 128 MiB，来源文件数上限 10000 |
 | `projects` | 是 | 至少一个项目范围；同一来源内 `project_id` 不得重复 |
 

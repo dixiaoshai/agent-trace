@@ -91,6 +91,8 @@
 - `content.blob_directory` 指向同一个私密目录，不与源日志、代码仓库同目录。
 - 每个来源的 `projects[].cwd_allowlist` 明确列出三个项目目录，不写整个 home 或 `/`。
 - 首次回补用 `backfill: "all"`，之后改回 `"none"`；回补前确认磁盘、隐私与保留期。
+- 给已有 content 库增加项目范围时，先改配置并重启 content `serve`。如果 `backfill: "none"` 已把旧文件记为基线，新范围内的旧文件不会自动回补；需要对选定文件显式导入，或临时使用 `backfill: "all"` 完成一次回补后改回 `"none"`。
+- 同步修改消费方的项目授权：Stats 正文查看从 content 配置派生项目范围；Knowledge 必须把新项目加入 `allowed_project_ids`，否则 follow 会以 `FORBIDDEN` 退出。
 - API 客户端沿用 `token_sha256`；Knowledge 只授权 `content`，Stats 只授权 `metadata`（若需要同时读两个归档，使用不同配置与游标）。
 
 启动前只做校验，不建库、不扫描：

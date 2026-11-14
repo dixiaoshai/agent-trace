@@ -2,7 +2,7 @@ import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_MAX_INLINE_BYTES, MAX_MAX_INLINE_BYTES, MIN_MAX_INLINE_BYTES, defaultBlobDirectory, type ContentPolicy } from './content.ts';
 import { defaultDatabase } from './paths.ts';
-import { ArchiveError, identifier, type JsonObject, type RuntimeHint, type View } from './types.ts';
+import { ArchiveError, identifier, runtimeHint, type JsonObject, type RuntimeHint, type View } from './types.ts';
 
 /**
  * Service configuration is deliberately explicit and strict. Unknown keys are
@@ -167,9 +167,9 @@ function parseSources(value: unknown, at: string, directory: string): SourceConf
     const source = strictObject(entry, here, ['instance_id', 'runtime', 'root', 'projects'], ['instance_id', 'root', 'projects']);
     const instanceId = id(source.instance_id, `${here}.instance_id`);
     const root = resolvePath(source.root, `${here}.root`, directory);
-    const runtime = source.runtime === undefined ? 'auto' : source.runtime;
-    if (runtime !== 'auto' && runtime !== 'codex' && runtime !== 'pi') {
-      invalid(`${here}.runtime`, 'must be "auto", "codex" or "pi"');
+    const runtime = source.runtime === undefined ? 'auto' : runtimeHint(source.runtime);
+    if (runtime === null) {
+      invalid(`${here}.runtime`, 'must be "auto", "codex", "pi" or "dsh" (alias "deepseek-harness")');
     }
     const projects = array(source.projects, `${here}.projects`);
     if (!projects.length) invalid(`${here}.projects`, 'must contain at least one project scope');
@@ -189,7 +189,7 @@ function parseSources(value: unknown, at: string, directory: string): SourceConf
       if (projectIds.has(project.project_id)) invalid(`${here}.projects[${projectIndex}].project_id`, `duplicate project id "${project.project_id}" in one source`);
       projectIds.add(project.project_id);
     }
-    return { instance_id: instanceId, root, runtime: runtime as RuntimeHint, projects: scopes };
+    return { instance_id: instanceId, root, runtime, projects: scopes };
   });
   const roots = new Map<string, string>();
   for (const [index, source] of sources.entries()) {

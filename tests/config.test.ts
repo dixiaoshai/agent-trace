@@ -231,13 +231,13 @@ test('checked-in content example uses a separate database, explicit projects and
   assert.equal(config.content.max_inline_bytes, 65536);
   assert.equal(config.content.blob_directory, '/absolute/path/to/content-state/blobs');
   assert.notEqual(path.basename(config.database), 'trace.sqlite');
-  assert.deepEqual(config.collection.sources.map(source => source.runtime), ['codex', 'codex', 'pi']);
+  assert.deepEqual(config.collection.sources.map(source => source.runtime), ['codex', 'codex', 'pi', 'dsh']);
   const projects = new Set(config.collection.sources.flatMap(source => source.projects.map(project => project.project_id)));
   assert.deepEqual([...projects].sort(), ['agent-knowledge', 'agent-stats', 'agent-trace']);
   assert.deepEqual(config.api.clients.map(client => client.views), [['content']]);
 });
 
-test('source runtime defaults to auto and accepts codex or pi explicitly', t => {
+test('source runtime defaults to auto and accepts codex, pi or dsh explicitly', t => {
   const dir = directory(t);
   const value = validConfig();
   const source = (value.collection as { sources: Array<Record<string, unknown>> }).sources[0]!;
@@ -250,9 +250,14 @@ test('source runtime defaults to auto and accepts codex or pi explicitly', t => 
   assert.equal(pi.collection.sources[0]!.runtime, 'pi');
   source.runtime = 'codex';
   assert.equal(loadServiceConfig(writeConfig(dir, value, 'codex.json')).collection.sources[0]!.runtime, 'codex');
+  source.runtime = 'dsh';
+  assert.equal(loadServiceConfig(writeConfig(dir, value, 'dsh.json')).collection.sources[0]!.runtime, 'dsh');
+  // The product name is accepted as an alias and stored as the canonical id.
+  source.runtime = 'deepseek-harness';
+  assert.equal(loadServiceConfig(writeConfig(dir, value, 'deepseek.json')).collection.sources[0]!.runtime, 'dsh');
 
   for (const invalid of ['deepseek', '', 1, null]) {
     source.runtime = invalid;
-    assert.throws(() => loadServiceConfig(writeConfig(dir, value, 'bad.json')), /must be "auto", "codex" or "pi"/);
+    assert.throws(() => loadServiceConfig(writeConfig(dir, value, 'bad.json')), /must be "auto", "codex", "pi" or "dsh"/);
   }
 });

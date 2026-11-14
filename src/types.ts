@@ -2,8 +2,14 @@ import { createHash } from 'node:crypto';
 
 export type JsonObject = Record<string, unknown>;
 export type View = 'metadata' | 'content';
-export type RuntimeId = 'codex' | 'pi';
+export type RuntimeId = 'codex' | 'pi' | 'dsh';
 export type RuntimeHint = RuntimeId | 'auto';
+/** `deepseek-harness` is accepted as an explicit alias for the canonical `dsh` runtime id. */
+export function runtimeHint(value: unknown): RuntimeHint | null {
+  if (value === 'auto' || value === 'codex' || value === 'pi' || value === 'dsh') return value;
+  if (value === 'deepseek-harness') return 'dsh';
+  return null;
+}
 export interface Event {
   schema_version: 1;
   event_id: string;

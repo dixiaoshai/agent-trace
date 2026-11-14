@@ -1,6 +1,6 @@
 # 架构说明
 
-状态：Codex 首版本地实现；P1 Trace 常驻采集与本机只读 API 已实现，消费方 follow worker 仍属 P2。更新日期：2026-11-14。
+状态：Codex、pi 与 DeepSeek Harness（`dsh`）适配器已实现；P1 Trace 常驻采集与本机只读 API 已实现，消费方 follow worker 已进入 P2。更新日期：2026-11-14。
 
 本文描述已实现的文件批次链路和 P1 Trace 服务。下一阶段的[无 hook 常驻采集与消费方主动拉取](continuous-collection.md)方案已确认：P0 固定[服务配置](service-config.md)、[本机只读 API](local-api.md)契约和[消费方 follow 约定](consumer-follow.md)，P1 实现 `serve`、扫描调度、租约和 HTTP 服务端；`follow` worker 尚未实现。同步状态留在各消费方，Trace 不负责向 Stats/Knowledge 推送。实施清单见 [TODO](../../TODO.md)。
 
@@ -10,8 +10,8 @@ Agent Trace 保存选定执行过程的证据，并向不同消费方提供同�
 
 ```mermaid
 flowchart TD
-    C[明确选择的 Codex JSONL] --> D[来源发现与完整行解析]
-    D --> N[Codex 事件标准化]
+    C[明确选择的 Codex JSONL / pi 或 dsh 会话] --> D[来源发现与完整记录解析]
+    D --> N[Codex / pi / dsh 事件标准化]
     N --> S[(Agent Trace SQLite)]
     S --> M[metadata 批次<br/>正文与原始对象为空]
     S --> B[content 批次<br/>仅含已捕获内容]
@@ -40,6 +40,7 @@ flowchart TD
 | 数据类型与基础校验 | [src/types.ts](../src/types.ts) | 事件/批次类型、身份、时间、哈希和错误 |
 | Codex 适配器 | [src/codex.ts](../src/codex.ts) | JSONL 完整行解析、原生记录到统一事件的映射、元数据白名单 |
 | Pi 适配器 | [src/pi.ts](../src/pi.ts) | pi session 树到轮次/用量/工具事件的映射；按请求用量合成累计快照与记录成本 |
+| Dsh 适配器 | [src/dsh.ts](../src/dsh.ts) | dsh 拼接 Zstandard 会话解码、v0/v4 事件到轮次/用量/工具事件的映射；按 header `origin`/`parentSession` 归属子代理会话，跳过 seeded 继承前缀；记录级用量合成累计快照 |
 | 来源与归档存储 | [src/store.ts](../src/store.ts) | 显式路径发现、来源大小检查、事务写入、去重、分页、高水位、读取与删除 |
 | 服务配置 | [src/config.ts](../src/config.ts) | 严格配置校验、相对路径解析、项目/cwd 匹配、默认库兼容 |
 | 本机 API 契约 | [src/api.ts](../src/api.ts) | 查询与授权校验、错误映射、状态信封、页大小边界 |
@@ -50,7 +51,21 @@ flowchart TD
 | 统计消费方 | [agent_stats/archive.py](../../agent-stats/agent_stats/archive.py) | 批次校验、事务游标、统计重建与删除传播 |
 | 证据消费方 | [src/archive/index.ts](../../agent-knowledge/src/archive/index.ts) | 事务导入、owner/project 范围、证据搜索和读取 |
 
-首版适配器与存储直接在同一个本地包内协作，尚未建立插件装载框架。后续增加运行时适配器时，应沿用公共事件信封、身份和消费契约；pi/deepseek-harness 的实现不属于当前交付。
+首版适配器与存储直接在同一个本地包内协作，尚未建立插件装载框架。后续增加运行时适配器时，应沿用公共事件信封、身份和消费契约。
+
+## 常驻进程与数据边界
+
+一个 Trace 配置只对应一个归档数据库和一种捕获模式，因此实际部署通常有多个常驻角色，而不是重复服务：
+
+| 角色 | 数据边界 | 说明 |
+|---|---|---|
+| Trace metadata `serve` | metadata SQLite | 采集结构、标题、路径和用量，供 Stats 统计 |
+| Trace content `serve` | 独立 content SQLite + blob | 只采集明确项目的正文，供 Knowledge 与按需正文查看 |
+| Stats `follow` | Stats SQLite | 唯一的 metadata 写入者，维护游标和租约 |
+| Stats 看板 `serve` | Stats SQLite，按需只读 content | 只读 HTTP 看板，不采集、不推进游标 |
+| Knowledge `follow` | Knowledge 证据 SQLite | 唯一的 content 证据写入者；CLI/MCP 按需读取 |
+
+metadata 与 content 分离是隐私和模式固定性的要求；Stats 的 `follow` 与看板分离是写入/只读和故障边界的划分；Knowledge 没有常驻看板，只保留同步 worker。不同数据库的 Trace 进程可以同时运行，同一归档数据库仍只允许一个采集租约。详见[常驻采集与消费方主动拉取](continuous-collection.md)。
 
 ## 原始证据、统一事件与投影
 
@@ -60,7 +75,7 @@ flowchart TD
 2. `kind/data/body`：统一类型、白名单元数据和便于使用的正文。未知记录保留为 `source.unknown`；content 模式下仍可按事件 ID 读取 `raw`，但其内容不一定进入 Agent Knowledge 的正文检索。
 3. 消费方投影：统计结果或可搜索的执行证据。投影可从可用的归档事件重新构建，不能代替归档捕获范围之外的原始资料。
 
-`runtime` 标识 Codex 等运行时，`model` 标识模型；事件原生类型仍保留在 `native_type`。当前不是面向所有运行时的完整模型调用审计系统。
+`runtime` 标识 Codex、pi、dsh 等运行时，`model` 标识模型；事件原生类型仍保留在 `native_type`。当前不是面向所有运行时的完整模型调用审计系统。
 
 ## 归档存储
 
@@ -82,6 +97,7 @@ Agent Stats 的消费表放在其现有统计库内。Agent Knowledge 的归档�
 - 会话身份是 `JSON.stringify([runtime, instance_id, session_id])`，不依赖源文件路径。文件移动或复制后仍能去重。
 - Codex 普通事件身份由会话身份和原文件一基行号生成；同位置不同内容视为来源冲突，整文件本次导入回滚。同内容出现在两行是两条证据。
 - pi 一个 entry 可产生多个事件，身份由会话身份、entry id、kind 与工具调用 id 生成，不依赖行号；副本和移动保持身份。
+- dsh 事件身份由会话身份、原生 `seq`（缺失时用解码后行号）、kind 生成；一行可产生多个 kind，不会互相覆盖。解码后的行号与 `record_hash` 描述逻辑 JSONL 追加顺序。
 - `archive_seq` 表示归档提交顺序；`occurred_at` 表示来源报告时间。没有按时间重排全局事件，也不声明不同运行时的全局因果顺序。
 - 每个消费方按 `archive_id` 保存自己的游标，并将事件处理结果和游标原子提交。完整旧页允许重试，跳页和向前延伸的重叠页拒绝。
 - 删除标记有专用确定性 ID。消费方校验身份后清除对应投影并记录删除状态，旧页合法重试不会恢复已删除数据。

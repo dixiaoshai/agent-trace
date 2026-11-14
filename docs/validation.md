@@ -147,3 +147,99 @@ P0 当时明确未验证（P1 已补齐，见下节）：没有实现或启动 `
 - 两个消费方都停止后追加：Trace 仍可 ingest 并提供 `/v1/status`（高水位 15）；重启 Knowledge 从离线游标补到 4 条追加事件，检索结果无重复。
 
 明确未覆盖：真实 Codex/pi 长跑、真实网络中断/Trace 重启/租约过期矩阵、跨机部署、目标库重建交互、blob 外置正文读取、未参与实现的 reviewer 审查。
+
+## 正文归档真实试点（2026-11-14）
+
+用户明确要求完成工作区 `TODO.md` “正文归档”最后一项，因此在真实 Codex/pi 历史上做了一次**一次性** content 回补试点。试点不常驻、不装 LaunchAgent、不改正式 metadata 库与 Stats 库，数据落在独立目录，可按“保留、清理与回滚”整段删除。
+
+### 范围与决定
+
+| 项 | 决定 |
+| --- | --- |
+| 归档库 | `~/.local/share/agent-trace/content-state/trace-content.sqlite`（`capture_mode: content`，archive_id `a3911c1b-bc08-4785-a473-5f4527e71688`） |
+| blob 目录 | `~/.local/share/agent-trace/content-state/blobs`（`0700`，文件 `0600`） |
+| 项目范围 | `agent-trace`、`agent-stats`、`agent-knowledge`，并包含历史拼写 `agent-stat`/`agent-knpwledge`、旧名 `knowrelay` 与两个 worktree 目录 |
+| 父级范围 | 追加 `plugins-workspace` = `.../plugins` 本身。三个项目的会话多数从父目录启动，若不包含它 `agent-trace` 项目回补结果为 0 会话 |
+| 回补策略 | `backfill: "all"`，一次回补后停止进程；不改回 `none` 也不常驻 |
+| API | 仅回环 `127.0.0.1:18767`，只授权 `agent-knowledge` 的 `content` 视图；未授权 Stats |
+| 消费方 | Knowledge `follow` 指向该试点库；Stats metadata 链路不变，不参与本次试点 |
+| 配置文件 | `~/.local/share/agent-trace/content-pilot.json`、`content-pilot.token`；`~/.local/share/agent-knowledge/pilot.json`、`pilot.follow.json`，均 `0600` |
+
+### 实际执行
+
+| 步骤 | 命令/动作 | 结果 |
+| --- | --- | --- |
+| 配置校验 | `node src/cli.ts config-check --config .../content-pilot.json` | 通过；未建库、未扫描、未监听 |
+| 回补 | `node src/cli.ts serve --config .../content-pilot.json`，首个 `collection.scan` 后观察 | `files=189 imported=16969 skipped=10921 pending=0 unmatched_projects=103 errors=0` |
+| 规模 | 归档库统计 | 50 会话、17,086 事件（含后续追加）、86 个已导入文件；103 个范围外文件被 `unmatched_projects` 跳过 |
+| 项目分布 | `sessions` 表 | `agent-stats` 17（codex 16 + pi 1）、`agent-knowledge` 10（codex）、`plugins-workspace` 23（pi 14 + codex 9）、`agent-trace` 0 |
+| 事件类型 | `events.payload.kind` | `source.unknown` 5158、`usage.snapshot` 2759、`tool.returned` 2636、`tool.called` 2630、`message.assistant` 1954、`reasoning.summary` 1116、`message.user` 270、`turn.started` 196、`turn.completed` 188、`turn.context` 122、`session.started` 50、`turn.interrupted` 7 |
+| Knowledge 拉取 | `node dist/interfaces/cli.js follow --config .../pilot.follow.json` | 17,086 条事件全部进入证据库，17,086 行 / 17,086 个唯一 `event_id`；游标 17,142（含删除造成的序号空洞） |
+| 证据库体积 | `~/.local/share/agent-knowledge/pilot.sqlite.archive-evidence.sqlite` | 128 MB（正文按页复制进证据库，blob 不复制） |
+| 检索与读取 | `archive-search --query 敏感数据审计 --project agent-stats`、`archive-search --query redact|deleteSession`、`archive-read --event <id>` | 命中真实对话与工具记录；`archive-read` 返回来源 path/line/record_hash 并接受 `content_ref` 校验 |
+| metadata 隔离 | `node src/cli.ts export --view metadata --limit 2 --db <试点库>` | `body/raw` 均为 `null` |
+| 重启一致性 | 停止后以同一配置再次 `serve` | archive_id 不变，事件数 = `count(distinct event_id)`，未变化文件全部 `skipped`，无重复事件 |
+| 真实断连重试 | 停止 Trace 后保持 Knowledge worker 运行，再以同一配置重启 Trace | worker 记录 `follow.error CONNECTION_ERROR(transient)` 且不退出；Trace 恢复后从已提交游标续传，证据库无重复 `event_id` |
+| 优雅停止 | SIGTERM 分别发送给 Trace 与 worker | 均输出 `serve.stopped` / `follow.stopped`，采集租约释放为 0 行 |
+
+### 脱敏命中与误报
+
+657 个事件、2,447 处替换（同一字符串在 `body` 与 `raw` 中各计一次）。类别分布：`secret` 1,414、`credential` 504、`userinfo` 139、`api_key` 101、`github_token` 37、`aws_key` 15、`private_key` 15、`google_key` 14、`gitlab_token` 14、`npm_token` 14、`slack_token` 12、`jwt` 12、`bearer` 3、`openai_key` 3。
+
+真实命中可核对：
+
+- `gh auth status` 的 `Token:` 行、`Authorization: Bearer/Basic …` 头、URL 内嵌凭据、工具 JSON 参数中的密钥字段均被替换为显式标记；
+- 8 个外置 blob 内也含 `[REDACTED:…]`，说明外置前已脱敏；
+- 对 8 类高信号形态（`sk-`、`ghp_`、`AKIA`、`xox*`、`eyJ` JWT、长 `Bearer`、私钥块、URL 凭据）做库内全量扫描，0 命中；URL 规则的少量命中经人工核对为 JSON 结构串误匹配与替换后标记本身。
+
+过匹配（误报）已确认：
+
+- `\b(?:Bearer|Basic|Digest|Token)\s+[A-Za-z0-9._~+/-]{8,}` 会命中普通散文：`basic instructions`、`Basic authentication`、`digest algorithm` 等被替换成 `[REDACTED:credential]`；504 处 `credential` 标记中约 418 处没有认证上下文。
+- 键值文本规则会命中代码与散文：`"js-tokens": "^7.29.7"`、`80% fewer tokens: …`、`TOKEN=<占位符>`、`Authorization: $OPENAI_API_KEY` 中的变量引用。
+- 影响是可读性与复盘质量下降（内容被替换而非泄漏）；捕获代码本身和测试文本也会被替换，属预期。
+
+### 外置文件与孤儿 blob
+
+- 51 个 `content_ref`、32 个唯一文件、7,153,689 字节；路径在 blob 目录内、长度与 SHA-256 全部校验通过，权限 `0600`（目录 `0700`），没有截断。
+- 磁盘实际 107 个文件，其中 75 个（70%）没有被任何已提交事件引用，全部产生于首次回补（20:04 批次）。这些文件不含比已提交内容更多的信息，但说明清理逻辑有缺口。
+- 根因（读代码确认）：`Archive.importFile` 在按 revision 排名决定是否导入**之前**就写出 blob；当判定为旧 revision（`apply === false`）而早退、或命中 `SESSION_DELETED`/`SOURCE_CONFLICT` 时，刚写入的文件不会被删除。文档所述“替换 revision 会清理 blob”只覆盖“已提交后再被替换/删除”的路径。
+- 建议修复方向（未在本 PR 实施）：把 revision 判定移到写 blob 之前，或在早退/异常路径删除本次写出且未被已提交事件引用的文件，并补一条“旧 revision 被跳过时不留孤儿文件”的回归。当前保留 75 个孤儿文件作为发现证据。
+
+### 复盘效果
+
+用真实会话做了一次题目式复盘，链路可用：
+
+- “agent-stats 仓库转 public 前做过什么敏感数据审计？”→ `archive-search --project agent-stats --query 敏感数据审计` 命中对应 assistant 回答，`archive-read` 返回来源文件、行号、`record_hash`，可直接作为证据引用；
+- “Trace 的 `redact`/`deleteSession` 是怎么实现的？”→ 命中 `plugins-workspace` 下真实工具调用与返回（读取 `src/content.ts`、`cli.ts` 的输出），能定位到具体命令与结果；
+- 跨项目检索按 `project_id` 过滤有效，`content_ref` 事件可读回引用元数据。
+
+限制：`agent-trace` 项目自身 0 会话（其历史会话 cwd 为 `plugins-workspace`），所以“三个项目各自复盘”实际只有两个项目有独立材料；会话标题、`source.unknown` 占比（5,158）偏高，字段解释仍依赖源日志。
+
+### 保留、清理与回滚
+
+- 保留期：试点数据保留 30 天（至 **2026-12-14**）或用户决定结束时删除，二者取先；未实现自动 GC/加密/独立保留期策略。
+- 数据位置：`~/.local/share/agent-trace/content-state/`（140 MB：库 + blob）、`~/.local/share/agent-knowledge/pilot.sqlite.archive-evidence.sqlite`（128 MB）、四个 `0600` 配置/令牌文件。
+- 清理（先确认无进程）：
+
+```sh
+pgrep -f content-pilot.json || true
+pgrep -f pilot.follow.json || true
+rm -rf ~/.local/share/agent-trace/content-state
+rm -f  ~/.local/share/agent-trace/content-pilot.json ~/.local/share/agent-trace/content-pilot.token
+rm -f  ~/.local/share/agent-knowledge/pilot.sqlite* ~/.local/share/agent-knowledge/pilot*.json
+```
+
+- 回滚：正式 metadata 库（`~/.local/share/agent-trace/trace.sqlite`）、Stats 库与三个 LaunchAgent 全程未改；删除上面两组目录即回到试点前。Knowledge 证据库独立于活跃知识库，删除不影响知识检索与既有游标（试点用的是新库，没有既有游标）。
+- 孤儿文件审计（若保留库）：比较 `blobs/` 文件名集合与库内 `content_ref.path` 文件名集合，差集人工确认后删除。
+
+### 操作提示
+
+- `nohup node … & echo $!` 记录的是包装 subshell 的 PID：对 `$!` 发 SIGTERM 只杀 subshell，真实进程继续持租约，直到 TTL（观察到 `COLLECTION_LOCKED` 持续约 5 分钟）。停止试点进程请用 `pgrep -f <config 路径>` 或前台运行。
+- 会话文件在试点期间持续追加（当前 pi 会话也被采集），因此事件计数会缓慢增长；记录数字以本节快照为准。
+
+### 明确未验证
+
+- 未把 content 采集做成常驻服务或 LaunchAgent；未评估长期磁盘增长与 blob GC 策略。
+- 未在真实会话上验证 `delete-session` 的删除传播（合成测试已覆盖）；未做 Knowledge MCP/skill 在真实宿主中的 content 检索验收。
+- 未给 Stats 授权 content 归档（按设计 Stats 只读 metadata），因此“Stats 面对 content 归档仍无正文”只在合成与配置层面验证。
+- 未解决脱敏过匹配与孤儿 blob 两个缺陷；未由未参与实现的 reviewer 复审本试点结论。

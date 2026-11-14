@@ -184,7 +184,7 @@ P0 当时明确未验证（P1 已补齐，见下节）：没有实现或启动 `
 
 ### 脱敏命中与误报
 
-657 个事件、2,447 处替换（同一字符串在 `body` 与 `raw` 中各计一次）。类别分布：`secret` 1,414、`credential` 504、`userinfo` 139、`api_key` 101、`github_token` 37、`aws_key` 15、`private_key` 15、`google_key` 14、`gitlab_token` 14、`npm_token` 14、`slack_token` 12、`jwt` 12、`bearer` 3、`openai_key` 3。
+657 个事件、2,447 处替换（同一字符串在 `body` 与 `raw` 中各计一次；计数含被采集会话里引用的标记文本，例如本试点自身的讨论，因此略高于真实替换数）。类别分布：`secret` 1,509、`credential` 504、`userinfo` 139、`api_key` 108、`github_token` 37、`aws_key` 15、`private_key` 15、`google_key` 14、`gitlab_token` 14、`npm_token` 14、`slack_token` 12、`jwt` 12、`openai_key` 5、`bearer` 5；另有 `depth` 25 / `depth_limit` 19 是会话文本在讨论这两个标记本身，不是本次替换。
 
 真实命中可核对：
 

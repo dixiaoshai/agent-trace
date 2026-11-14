@@ -28,7 +28,7 @@ npm run verify:consumers
 以下命令均在 Agent Trace 目录执行，示例库要使用未被其他捕获模式占用的新文件：
 
 ```sh
-node src/cli.ts ingest --source fixtures/codex/demo.jsonl --instance demo-device --project demo --capture content --db .agent-trace/demo.sqlite
+node src/cli.ts ingest --source fixtures/codex/demo.jsonl --instance demo-device --project demo --runtime auto --capture content --db .agent-trace/demo.sqlite
 node src/cli.ts status --db .agent-trace/demo.sqlite
 ```
 
@@ -165,6 +165,7 @@ content 捕获包含请求、工具参数/输出及可见推理摘要；没有�
 
 ```sh
 node src/cli.ts delete-session --db .agent-trace/demo.sqlite --runtime codex --instance demo-device --session archive-demo-session
+node src/cli.ts delete-session --db .agent-trace/demo.sqlite --runtime pi --instance demo-device --session pi-demo-session
 ```
 
 执行后，从两个消费方各自已提交的游标继续导出对应视图并导入。验证 Agent Stats 不再显示该会话，Agent Knowledge 搜索不再返回该会话证据。只删除归档而不继续消费，无法立即清理已离线的消费方投影。
@@ -179,7 +180,8 @@ node src/cli.ts delete-session --db .agent-trace/demo.sqlite --runtime codex --i
 | `SOURCE_CONFLICT` | 同会话被归到另一个项目 | 核对项目/实例和 cwd 配置；勿仅靠换实例绕过，以免重复统计 |
 | `SESSION_DELETED` | 同身份已显式删除 | 停止重导；确认是否需要另行规划恢复 |
 | `COLLECTION_LOCKED` | 同一归档已有采集进程持有有效租约 | 检查现有 `serve`；不要强抢运行中的租约，等它停止或租约过期 |
-| `INVALID_RECORD` | 完整行不是支持的 Codex JSON 记录 | 核对来源格式；该文件本次事件未提交 |
+| `INVALID_RECORD` | 完整行不是受支持的 Codex/pi JSON 记录 | 核对来源格式；该文件本次事件未提交 |
+| `RUNTIME_MISMATCH` | 显式 `--runtime` 与实际文件格式不一致 | 去掉 `--runtime` 使用 `auto`，或改正参数 |
 | `pending` 非空 | 文件末尾尚无结束换行 | 等日志写完后再次导入 |
 | `FILE_TOO_LARGE` / `TOO_MANY_SOURCES` | 超过首版采集范围限制 | 缩小所选来源，保留原始事件顺序和身份 |
 | 输出文件已存在 | 导出使用只新建策略 | 使用新文件名，保留原成功页用于可靠重试 |

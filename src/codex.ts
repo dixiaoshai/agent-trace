@@ -25,6 +25,14 @@ function title(value: unknown): string | null {
 }
 
 export interface SourceRecord { row: JsonObject; line: number; record_hash: string }
+
+/** Cwd of the identity the rollout finally belongs to (last session_meta). */
+export function sessionCwd(records: SourceRecord[]): unknown {
+  const metas = records.filter(record => record.row.type === 'session_meta');
+  if (!metas.length) throw new ArchiveError('MISSING_SESSION', 'A complete session_meta identity is required');
+  return object(metas[metas.length - 1]!.row.payload)?.cwd;
+}
+
 export function parseRecords(input: string): { records: SourceRecord[]; pending: boolean } {
   const lines = input.split('\n');
   const tail = lines.pop()!;

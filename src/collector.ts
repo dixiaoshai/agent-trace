@@ -580,7 +580,7 @@ export class Collector {
       return match.project_id;
     };
     try {
-      const report = this.archive.importFile(version.path, source.instance_id, resolve, titles);
+      const report = this.archive.importFile(version.path, source.instance_id, resolve, titles, source.runtime);
       summary.imported += report.imported;
       summary.skipped += report.skipped;
       if (report.pending) summary.pending++;

@@ -168,6 +168,7 @@ test('project matching honors path boundaries, nesting and ambiguity', () => {
   const source: SourceConfig = {
     instance_id: 'device',
     root: '/logs',
+    runtime: 'auto',
     projects: [
       { project_id: 'work', cwd_allowlist: ['/tmp/work'] },
       { project_id: 'nested', cwd_allowlist: ['/tmp/work/nested'] },
@@ -183,7 +184,7 @@ test('project matching honors path boundaries, nesting and ambiguity', () => {
   assert.equal((projectForCwd(source, '') as { error: string }).error, 'PROJECT_UNMATCHED');
   assert.equal((projectForCwd(source, undefined) as { error: string }).error, 'PROJECT_UNMATCHED');
   const ambiguous: SourceConfig = {
-    instance_id: 'device', root: '/logs',
+    instance_id: 'device', root: '/logs', runtime: 'auto',
     projects: [
       { project_id: 'a', cwd_allowlist: ['/tmp/shared'] },
       { project_id: 'b', cwd_allowlist: ['/tmp/shared'] },
@@ -220,4 +221,24 @@ test('checked-in service example stays valid and does not enable collection or t
   assert.equal(config.api.enabled, false);
   assert.equal(config.capture_mode, 'metadata');
   assert.deepEqual(config.api.clients.map(client => client.views), [['metadata'], ['content']]);
+});
+
+test('source runtime defaults to auto and accepts codex or pi explicitly', t => {
+  const dir = directory(t);
+  const value = validConfig();
+  const source = (value.collection as { sources: Array<Record<string, unknown>> }).sources[0]!;
+  const defaults = loadServiceConfig(writeConfig(dir, value, 'auto.json'));
+  assert.equal(defaults.collection.sources[0]!.runtime, 'auto');
+  assert.equal((describeServiceConfig(defaults).collection as { sources: Array<{ runtime: string }> }).sources[0]!.runtime, 'auto');
+
+  source.runtime = 'pi';
+  const pi = loadServiceConfig(writeConfig(dir, value, 'pi.json'));
+  assert.equal(pi.collection.sources[0]!.runtime, 'pi');
+  source.runtime = 'codex';
+  assert.equal(loadServiceConfig(writeConfig(dir, value, 'codex.json')).collection.sources[0]!.runtime, 'codex');
+
+  for (const invalid of ['deepseek', '', 1, null]) {
+    source.runtime = invalid;
+    assert.throws(() => loadServiceConfig(writeConfig(dir, value, 'bad.json')), /must be "auto", "codex" or "pi"/);
+  }
 });

@@ -250,3 +250,21 @@ test('single-identity logs keep the published v1 event identifier', t => {
   const expected = hash(JSON.stringify(['codex', 'local', 'archive-demo-session', line]));
   assert.ok(events.some(event => event.event_id === expected));
 });
+
+test('folded events expose the source series used by their identifier', t => {
+  const { dir, archive } = setup(t);
+  const child = path.join(dir, 'series-child.jsonl');
+  writeFileSync(child, [
+    JSON.stringify({ timestamp: '2026-04-01T00:00:00Z', type: 'session_meta', payload: { id: 'child-id', cwd: '/synthetic/series' } }),
+    JSON.stringify({ timestamp: '2026-04-01T00:00:01Z', type: 'session_meta', payload: { id: 'parent-id', cwd: '/synthetic/series' } }),
+    JSON.stringify({ timestamp: '2026-04-01T00:00:02Z', type: 'event_msg', payload: { type: 'task_started', turn_id: 'turn' } }),
+  ].join('\n') + '\n');
+  archive.importFile(child, 'local', 'demo');
+  const events = archive.exportBatch(0, 100, 'metadata').events;
+  const folded = events.find(event => event.kind === 'turn.started')!;
+  assert.equal(folded.source!.series, 'child-id');
+  assert.equal(folded.session_id, 'parent-id');
+  const start = events.find(event => event.kind === 'session.started')!;
+  assert.equal(start.source!.series, 'child-id');
+  assert.equal(start.body, null);
+});

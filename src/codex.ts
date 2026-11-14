@@ -138,7 +138,8 @@ export function normalize(
       archive_seq: 0,
       runtime: 'codex', instance_id: instance, session_id: sessionId, session_key: sessionKey, project_id: project,
       kind, occurred_at: timestamp(row.timestamp), observed_at: observedAt,
-      native_type: row.type + (subtype ? '.' + subtype : ''), source: { path: sourcePath, line, record_hash }, data,
+      native_type: row.type + (subtype ? '.' + subtype : ''),
+      source: { path: sourcePath, line, record_hash, ...(series ? { series } : {}) }, data,
       body: mode === 'content' ? body : null, raw: mode === 'content' ? row : null,
     };
   });

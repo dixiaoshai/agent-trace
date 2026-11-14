@@ -110,10 +110,12 @@ identity, privacy guarantees or cursor semantics.
 Two rollouts folded into the same session reuse line numbers while holding
 different records, so such files add their own first `session_meta` identity to
 the identifier tuple: `[runtime, instance_id, session_id, first_session_id,
-line]`. Logs with a single identity keep the published four-element tuple, so
-existing identifiers never change. The discriminator is stable inside the file
-and travels with copied/moved evidence; identical content at the same position
-still deduplicates.
+line]`, and carry it as the optional `source.series`. Logs with a single
+identity keep the published four-element tuple, so existing identifiers never
+change. The discriminator is stable inside the file and travels with
+copied/moved evidence; identical content at the same position still deduplicates.
+Consumers that recompute identifiers MUST include `source.series` when present
+and reject an empty or session-equal series.
 
 ## Normalized kinds and allowlisted data
 

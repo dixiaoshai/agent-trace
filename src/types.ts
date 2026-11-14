@@ -15,7 +15,7 @@ export interface Event {
   occurred_at: string | null;
   observed_at: string;
   native_type: string;
-  source: { path: string; line: number; record_hash: string } | null;
+  source: { path: string; line: number; record_hash: string; series?: string } | null;
   data: JsonObject;
   body: JsonObject | null;
   raw: JsonObject | null;

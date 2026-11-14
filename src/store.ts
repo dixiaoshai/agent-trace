@@ -2,9 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { chmodSync, mkdirSync, readFileSync, readdirSync, lstatSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { NORMALIZER_VERSION, normalize, parseRecords } from './codex.ts';
+import { NORMALIZER_VERSION, normalize, parseRecords, sessionCwd as codexSessionCwd } from './codex.ts';
+import {
+  detectRuntime, normalize as normalizePi, parseRecords as parsePiRecords, sessionCwd as piSessionCwd,
+} from './pi.ts';
 import type { TitleLookup } from './titles.ts';
-import { ArchiveError, cursorOf, hash, identifier, object, timestamp, viewOf, type ArchiveStatus, type Batch, type Event, type View } from './types.ts';
+import {
+  ArchiveError, cursorOf, hash, identifier, timestamp, viewOf,
+  type ArchiveStatus, type Batch, type Event, type RuntimeHint, type View,
+} from './types.ts';
 
 const MAX_FILE_BYTES = 128 * 1024 * 1024;
 
@@ -63,6 +69,7 @@ export class Archive {
     instanceId: string,
     project: ProjectSelector,
     titles?: TitleLookup,
+    runtimeHint: RuntimeHint = 'auto',
   ): { imported: number; skipped: number; pending: boolean } {
     identifier(instanceId, 'instance ID');
     if (typeof project === 'string') identifier(project, 'project ID');
@@ -74,24 +81,31 @@ export class Archive {
     const buffer = readFileSync(absolutePath);
     if (buffer.length > MAX_FILE_BYTES) throw new ArchiveError('FILE_TOO_LARGE', 'Source exceeds 128 MiB');
     const input = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
-    const { records, pending } = parseRecords(input);
+    // Empty selected files stay a no-op rather than a runtime-detection error.
+    if (!input.trim()) return { imported: 0, skipped: 0, pending: false };
+    const detected = detectRuntime(input);
+    if (runtimeHint !== 'auto' && runtimeHint !== detected) {
+      throw new ArchiveError('RUNTIME_MISMATCH', `Source is a ${detected} session, but ${runtimeHint} was selected`);
+    }
+    const runtime = detected;
+    const { records, pending } = runtime === 'pi' ? parsePiRecords(input) : parseRecords(input);
     if (!records.length) return { imported: 0, skipped: 0, pending };
     let projectId: string;
     if (typeof project === 'function') {
-      const metas = records.filter(record => record.row.type === 'session_meta');
       // Missing session identity is a malformed source, not a project mismatch;
-      // keep it retryable as an error instead of silently baselining it.
-      if (!metas.length) throw new ArchiveError('MISSING_SESSION', 'A complete session_meta identity is required');
-      // Match the final identity used by normalize() so project selection and
-      // event attribution see the same resume/subagent metadata.
-      const meta = metas[metas.length - 1]!;
-      projectId = project(object(meta.row.payload)?.cwd);
+      // keep it retryable as an error instead of silently baselining it. The
+      // Codex helper reads the final resume/subagent identity, matching
+      // normalize(); the pi helper reads the session header.
+      const cwd = runtime === 'pi' ? piSessionCwd(records) : codexSessionCwd(records);
+      projectId = project(cwd);
       identifier(projectId, 'project ID');
     } else projectId = project;
-    const events = normalize(records, absolutePath, instanceId, projectId, this.captureMode, titles);
+    const events = runtime === 'pi'
+      ? normalizePi(records, absolutePath, instanceId, projectId, this.captureMode)
+      : normalize(records, absolutePath, instanceId, projectId, this.captureMode, titles);
     const first = events[0]!;
-    // Codex can leave several files for one session identity (resumed or
-    // subagent rollouts) and can rewrite a rollout in place. Like the direct
+    // A rollout can be rewritten in place, and Codex can leave several files
+    // for one session identity (resumed or subagent rollouts). Like the direct
     // importer, keep the newest revision: the greatest last event timestamp,
     // then the greatest row count. Older or identical revisions are skipped, so
     // copies stay idempotent and cumulative usage is never merged across

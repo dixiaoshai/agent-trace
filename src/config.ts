@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { defaultDatabase } from './paths.ts';
-import { ArchiveError, identifier, type JsonObject, type View } from './types.ts';
+import { ArchiveError, identifier, type JsonObject, type RuntimeHint, type View } from './types.ts';
 
 /**
  * Service configuration is deliberately explicit and strict. Unknown keys are
@@ -29,6 +29,8 @@ export interface SourceConfig {
   instance_id: string;
   /** Absolute, resolved file or directory selected for collection. */
   root: string;
+  /** "auto" detects Codex rollouts and pi sessions from the first record. */
+  runtime: RuntimeHint;
   projects: ProjectScope[];
 }
 
@@ -159,9 +161,13 @@ function parseClients(value: unknown, at: string): ApiClientConfig[] {
 function parseSources(value: unknown, at: string, directory: string): SourceConfig[] {
   const sources = array(value, at).map((entry, index): SourceConfig => {
     const here = `${at}[${index}]`;
-    const source = strictObject(entry, here, ['instance_id', 'root', 'projects'], ['instance_id', 'root', 'projects']);
+    const source = strictObject(entry, here, ['instance_id', 'runtime', 'root', 'projects'], ['instance_id', 'root', 'projects']);
     const instanceId = id(source.instance_id, `${here}.instance_id`);
     const root = resolvePath(source.root, `${here}.root`, directory);
+    const runtime = source.runtime === undefined ? 'auto' : source.runtime;
+    if (runtime !== 'auto' && runtime !== 'codex' && runtime !== 'pi') {
+      invalid(`${here}.runtime`, 'must be "auto", "codex" or "pi"');
+    }
     const projects = array(source.projects, `${here}.projects`);
     if (!projects.length) invalid(`${here}.projects`, 'must contain at least one project scope');
     const scopes = projects.map((projectEntry, projectIndex): ProjectScope => {
@@ -180,7 +186,7 @@ function parseSources(value: unknown, at: string, directory: string): SourceConf
       if (projectIds.has(project.project_id)) invalid(`${here}.projects[${projectIndex}].project_id`, `duplicate project id "${project.project_id}" in one source`);
       projectIds.add(project.project_id);
     }
-    return { instance_id: instanceId, root, projects: scopes };
+    return { instance_id: instanceId, root, runtime: runtime as RuntimeHint, projects: scopes };
   });
   const roots = new Map<string, string>();
   for (const [index, source] of sources.entries()) {
@@ -280,6 +286,7 @@ export function describeServiceConfig(config: ServiceConfig): JsonObject {
       backfill: config.collection.backfill,
       sources: config.collection.sources.map(source => ({
         instance_id: source.instance_id,
+        runtime: source.runtime,
         root: source.root,
         projects: source.projects.map(project => ({ project_id: project.project_id, cwd_allowlist: [...project.cwd_allowlist] })),
       })),

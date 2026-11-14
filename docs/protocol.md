@@ -1,8 +1,9 @@
 # Shared agent archive protocol v1
 
-Status: first local implementation. Only the Codex adapter is implemented. Pi and
-deepseek-harness are future adapters; no packages, hooks or runtime integrations
-for them are installed by this project.
+Status: first local implementation. Codex and pi adapters are implemented;
+deepseek-harness remains a future adapter. No packages, hooks or runtime
+integrations are installed by the agent's own installer; Trace reads the JSONL
+files the harness already writes.
 
 ## Ownership and transport
 
@@ -140,7 +141,7 @@ All ordinary events include nullable `turn_id`, `root_turn_id`, and `model`.
 | `reasoning.summary` | `available` boolean | `text` if visible |
 | `tool.called` | `call_id`, `name`, `input_bytes` | `arguments` (native structured value or string) |
 | `tool.returned` | `call_id`, `output_bytes`, `status: result_observed` | `output` |
-| `usage.snapshot` | `cumulative`, `last_usage`, `rate_limit_only` | null |
+| `usage.snapshot` | `cumulative`, `last_usage`, `rate_limit_only`, optional `cost_usd` (nonnegative number) and `cost_source` (`provider` or `model_rates`) | null |
 | `context.compacted` | no additional fields | optional summary |
 | `source.unknown` | no additional fields | null; original in `raw` |
 | `session.deleted` | no additional fields | null |
@@ -150,7 +151,12 @@ Usage objects allow ONLY nonnegative integer `input_tokens`, `cached_input_token
 `total_tokens`. Absent fields are unknown, NOT zero. Input may include cached input;
 output may include reasoning output; never sum every field. `usage.snapshot`
 explicitly denotes cumulative source accounting, not a billable new request.
-Consumers retain cumulative reset/missing evidence and fork inheritance warnings.
+`cost_usd` is the recorded cost of the same request described by `last_usage`
+(not of the cumulative snapshot). `cost_source=provider` means the provider
+reported the charge; `model_rates` means the harness computed it from its own
+model rate table. Consumers must not present the two as account bills, and an
+absent field means unknown, NOT zero. Consumers retain cumulative reset/missing
+evidence and fork inheritance warnings.
 A tool return is evidence of an observed result, NOT evidence of task success.
 
 Native `event_msg` messages and `response_item.message` can describe the same
@@ -158,6 +164,37 @@ message; content consumers must tolerate mirror records and cite their distinct
 sources. Statistics consumers should prefer the adapter's bounded titles and
 existing source-aware attribution rules instead of counting every representation
 as a new user turn. Streaming chunks and settled messages must not be billed twice.
+
+## Pi adapter mapping
+
+Pi sessions are JSONL entries connected by `id`/`parentId`. The adapter
+synthesizes a turn id from each user entry id; assistant terminal stop reasons
+close the turn. It emits `message.user`, `turn.started`, `message.assistant`,
+`usage.snapshot`, `tool.called`, `tool.returned`, `turn.completed`,
+`turn.interrupted`, `context.compacted`, `session.started` and
+`source.unknown` for everything else.
+
+Usage mapping follows the v1 convention that input includes cached input:
+
+| Pi | v1 |
+|---|---|
+| `usage.input` + `usage.cacheRead` | `input_tokens` |
+| `usage.cacheRead` | `cached_input_tokens` |
+| `usage.cacheWrite` | `cache_write_input_tokens` |
+| `usage.output` | `output_tokens` |
+| `usage.reasoning` | `reasoning_output_tokens` (already inside output; never added again) |
+| `usage.totalTokens` | `total_tokens` |
+| `usage.cost.total` | `cost_usd` |
+| `usage.cost.totalFromProvider` | `cost_source=provider`, else `model_rates` |
+
+`cumulative` is the adapter's running sum over this file, so consumers that only
+understand cumulative deltas still see the same per-request usage. Pi `/fork`
+and `/clone` copy entries verbatim; the header keeps the original entry
+timestamps and names the source in `parentSession`. The adapter records that id
+as `forked_from_session_id`, and consumers skip entries older than the new
+header timestamp so inherited history is not billed twice. Pi records a session
+name only when `/name` (or `--name`) was used; it is exposed as
+`session.started.data.title`.
 
 ## Storage and deletion
 
@@ -191,7 +228,7 @@ erasure guarantee. New consumers see tombstones even when prior events were remo
 
 ## First acceptance criteria
 
-- Synthetic Codex import, duplicate import and moved-copy import produce no doubles.
+- Synthetic Codex and pi import, duplicate import and moved-copy import produce no doubles.
 - Incomplete tails resume; malformed records/conflicting rewrites do not partially commit.
 - Content is absent from metadata export and statistics storage.
 - Both consumers resume independently and reject gaps/conflicts/unsupported versions.

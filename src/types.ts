@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 
 export type JsonObject = Record<string, unknown>;
 export type View = 'metadata' | 'content';
+export type RuntimeId = 'codex' | 'pi';
+export type RuntimeHint = RuntimeId | 'auto';
 export interface Event {
   schema_version: 1;
   event_id: string;

@@ -34,7 +34,8 @@ node src/cli.ts serve --config PATH [--db OVERRIDE.sqlite]
     "sources": [
       {
         "instance_id": "workstation-a",
-        "root": "/absolute/path/to/selected/codex/sessions",
+        "runtime": "auto",
+        "root": "/absolute/path/to/selected/agent/sessions",
         "projects": [
           { "project_id": "project-a", "cwd_allowlist": ["/absolute/path/to/project-a"] }
         ]
@@ -76,7 +77,8 @@ node src/cli.ts serve --config PATH [--db OVERRIDE.sqlite]
 
 | 字段 | 必填 | 规则 |
 | --- | --- | --- |
-| `instance_id` | 是 | 稳定来源实例 ID，写入事件身份；同一 Codex 安装使用同一值 |
+| `instance_id` | 是 | 稳定来源实例 ID，写入事件身份；同一安装使用同一值 |
+| `runtime` | 否 | `auto`（默认）、`codex` 或 `pi`。`auto` 按首条记录识别；显式值与实际格式不一致时该文件报 `RUNTIME_MISMATCH` |
 | `root` | 是 | 文件或目录，递归接收 `.jsonl`；相对路径相对配置文件；不跟随符号链接；单文件上限 128 MiB，来源文件数上限 10000 |
 | `projects` | 是 | 至少一个项目范围；同一来源内 `project_id` 不得重复 |
 
@@ -85,7 +87,7 @@ node src/cli.ts serve --config PATH [--db OVERRIDE.sqlite]
 | 字段 | 必填 | 规则 |
 | --- | --- | --- |
 | `project_id` | 是 | 写入事件的统一项目 ID |
-| `cwd_allowlist` | 是 | 至少一个目录；会话 `metadata.cwd` 必须等于或位于其中之一 |
+| `cwd_allowlist` | 是 | 至少一个目录；会话 `cwd` 必须等于或位于其中之一 |
 
 ### `api`
 
@@ -127,12 +129,12 @@ unset TOKEN
 
 ## 项目匹配规则
 
-采集器在归档一个会话之前，用 `session_meta` 的 `cwd` 与同一来源的 `projects[].cwd_allowlist` 做词法路径包含匹配：
+采集器在归档一个会话之前，用会话声明的 `cwd` 与同一来源的 `projects[].cwd_allowlist` 做词法路径包含匹配。Codex 取最后一条 `session_meta.payload.cwd`，pi 取 session header 的 `cwd`：
 
 - `cwd` 必须是非空绝对路径；缺失、相对路径或越界路径不导入，计为 `PROJECT_UNMATCHED`。
 - 按路径段比较，`/work/app` 不会匹配 `/work/application`；`..` 会先规范化。
 - 多层 allowlist 同时匹配时取最长（最具体）的目录。不同项目在相同深度并列匹配时视为歧义，计为 `PROJECT_AMBIGUOUS`，该会话跳过直到配置修正。
-- 不解析符号链接；配置应使用 Codex 在会话元数据中记录的同一路径形式。
+- 不解析符号链接；配置应使用代理在会话元数据中记录的同一路径形式。
 - 不要用 `/`、整个 home 或过宽目录作为 allowlist；这会把该来源下所有会话归入同一项目。
 - 未知项目只跳过并可观察，不自动归入默认项目。日期目录可能混有多个项目，不能按目录名猜测归属。
 

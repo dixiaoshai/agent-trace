@@ -12,7 +12,7 @@ Usage: agent-trace <command> [options]
 Node.js >=24.15.0; no runtime dependencies; no automatic history import.
 
 Commands (all accept --db PATH, default .agent-trace/trace.sqlite):
-  ingest --source PATH [--source PATH ...] --instance ID --project ID [--capture metadata|content]
+  ingest --source PATH [--source PATH ...] --instance ID --project ID [--runtime auto|codex|pi] [--capture metadata|content]
   export [--after CURSOR] [--limit 1..10000] [--view metadata|content] [--output FILE]
   read --event ID [--view metadata|content]
   delete-session --runtime codex --instance ID --session ID
@@ -33,7 +33,7 @@ scan and stop events are emitted as NDJSON. See docs/service-config.md and
 docs/local-api.md.
 `;
 const commandOptions: Record<string, ParseArgsConfig['options']> = {
-  ingest: { source: { type: 'string', multiple: true }, instance: { type: 'string' }, project: { type: 'string' }, capture: { type: 'string' } },
+  ingest: { source: { type: 'string', multiple: true }, instance: { type: 'string' }, project: { type: 'string' }, runtime: { type: 'string' }, capture: { type: 'string' } },
   export: { after: { type: 'string' }, limit: { type: 'string' }, view: { type: 'string' }, output: { type: 'string' } },
   read: { event: { type: 'string' }, view: { type: 'string' } },
   'delete-session': { runtime: { type: 'string' }, instance: { type: 'string' }, session: { type: 'string' } },
@@ -51,6 +51,10 @@ async function main(): Promise<void> {
   const project = command === 'ingest' ? identifier(v.project, '--project') : '';
   const session = command === 'delete-session' ? identifier(v.session, '--session') : '';
   const runtime = command === 'delete-session' ? identifier(v.runtime, '--runtime') : '';
+  const runtimeHint = command === 'ingest' ? (v.runtime === undefined ? 'auto' : identifier(v.runtime, '--runtime')) : 'auto';
+  if (runtimeHint !== 'auto' && runtimeHint !== 'codex' && runtimeHint !== 'pi') {
+    throw new ArchiveError('INVALID_INPUT', '--runtime must be auto, codex or pi');
+  }
   if (command === 'ingest' && !sources?.length) throw new ArchiveError('INVALID_INPUT', 'At least one --source is required');
   const eventId = command === 'read' ? identifier(v.event, '--event') : '';
   const after = command === 'export' ? cursorOf(Number(v.after ?? 0)) : 0;
@@ -94,7 +98,7 @@ async function main(): Promise<void> {
           const pending: string[] = [], errors: Array<{ path: string; code: string }> = [];
           for (const filename of files) {
             try {
-              const report = archive.importFile(filename, instance, project);
+              const report = archive.importFile(filename, instance, project, undefined, runtimeHint);
               imported += report.imported; skipped += report.skipped;
               if (report.pending) pending.push(filename);
             } catch (error) { errors.push({ path: filename, code: error instanceof ArchiveError ? error.code : 'SOURCE_ERROR' }); }

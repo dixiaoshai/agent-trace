@@ -1,6 +1,6 @@
 # 常驻采集与消费方主动拉取方案
 
-状态：方案已确认；P0 已固定并实现服务配置校验、事件/状态接口契约与消费方 follow 约定。常驻采集、HTTP 服务端和两个 follow worker 尚未实现（P1/P2），实施交接见工作区 [TODO](../../TODO.md)。更新日期：2026-11-14。
+状态：方案已确认；P0 固定配置/API/follow 契约，P1 已实现 Trace 常驻采集、单归档租约/心跳和只读 HTTP API。两个消费方 follow worker 尚未实现（P2），实施交接见工作区 [TODO](../../TODO.md)。更新日期：2026-11-14。
 
 ## 已确认的方向
 
@@ -24,7 +24,7 @@
 | 同步进度 | 消费库已有事务游标 | 复用游标，补同步任务配置、状态和错误 |
 | 删除 | 导出并手动消费墓碑 | 各 worker 自动取到墓碑并清除投影 |
 
-接口与配置的固定细节见[服务配置](service-config.md)、[本机 API](local-api.md)和[消费方 follow 约定](consumer-follow.md)。`serve`、HTTP 服务端与 `follow` 命令仍是待实现约定；当前只有 `config-check` 可执行。
+接口与配置的固定细节见[服务配置](service-config.md)、[本机 API](local-api.md)和[消费方 follow 约定](consumer-follow.md)。P1 已实现 `serve`、扫描调度、租约/心跳和 HTTP 服务端；`config-check` 与手动 CLI 继续保留。消费方 `follow` 命令仍是待实现约定（P2）。
 
 ## 目标架构与进程
 
@@ -49,7 +49,7 @@ Trace 只依赖来源配置和自身存储，不导入 Stats 的 Python 实现�
 
 ## Trace：常驻采集
 
-新增前台常驻命令 `agent-trace serve --config PATH`（P1 实现）。先通过严格校验的[服务配置](service-config.md)确定：
+新增前台常驻命令 `agent-trace serve --config PATH`（P1 已实现）。启动时通过严格校验的[服务配置](service-config.md)确定：
 
 - 数据库、捕获模式、本机监听地址与端口。
 - 明确的日志根目录或文件范围、来源实例 ID。
@@ -135,7 +135,7 @@ Trace 展示采集进度、归档高水位、来源错误与运行心跳；Stats
 
 ## 实施顺序与完成标准
 
-先定义配置与只读接口，完成 Trace 采集/API，再并行完成两个消费方 worker，最后端到端验证。前台稳定后再考虑 macOS launchd 托管；不提前修改全局启动项。
+先定义配置与只读接口，完成 Trace 采集/API，再并行完成两个消费方 worker，最后端到端验证。P0/P1 已完成；P2 消费方 worker 尚未实现。前台稳定后再考虑 macOS launchd 托管；不提前修改全局启动项。
 
 最小完成条件：新日志自动入库、两个消费方无需手工搬页即可更新、独立停机与重启恢复、重复请求不重复计数、事务中断不跳游标、删除传播、Stats Trace 模式不直读日志、MCP 离线不影响 Knowledge 同步、协议/权限错误明确可见。
 

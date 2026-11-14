@@ -6,9 +6,9 @@
 
 项目命名与迁移规则见[统一命名说明](../NAMING.md)。
 
-当前闭环：**明确选择 Codex JSONL → 本地归档 → metadata/content 批次导出 → 两个消费方独立续读**。默认不扫描用户历史，不调用模型、不联网、不重新执行日志中的工具。
+当前闭环：**明确选择 Codex JSONL → 本地归档 → metadata/content 批次导出或本机分页 API → 两个消费方独立续读**。默认不扫描用户历史，不调用模型、不联网、不重新执行日志中的工具。
 
-下一阶段采用 **无 hook 常驻采集 + 消费方主动拉取**：Trace 增加采集循环和只读事件 API，Stats 与 Knowledge 分别在自身项目实现同步任务。Trace 不维护下游清单、投递状态或执行下游命令。P0 已完成严格的服务配置校验，并固定本机 API 与消费方 follow 契约；`serve`/HTTP 服务端/`follow` 尚未实现。见[服务配置](docs/service-config.md)、[本机 API](docs/local-api.md)、[消费方 follow 约定](docs/consumer-follow.md)、[设计](docs/continuous-collection.md)与[实施 TODO](../TODO.md)。
+下一阶段采用 **无 hook 常驻采集 + 消费方主动拉取**：Trace 的前台 `serve` 已实现常驻扫描、单归档采集租约和只读事件 API；Stats 与 Knowledge 的自动 `follow` worker 仍属 P2。Trace 不维护下游清单、投递状态或执行下游命令。P0 配置/接口契约与 P1 Trace 服务见[服务配置](docs/service-config.md)、[本机 API](docs/local-api.md)、[消费方 follow 约定](docs/consumer-follow.md)、[设计](docs/continuous-collection.md)与[实施 TODO](../TODO.md)。
 
 ## 文档
 
@@ -34,16 +34,21 @@ npm run cli -- export --db .agent-trace/demo.sqlite --view content --limit 10000
 
 输出文件使用 `0600` 权限并拒绝覆盖已有文件。每个消费方成功导入后保存并报告自己的 `cursor`；下一次导出用该值作为 `--after`。`has_more=true` 时继续取下一页，即使没有新源文件也要取完。不要把一方的游标用于另一方。相同文件再次导入、移到归档目录或复制后导入都不会重复写入。
 
-## 常驻服务配置（P0 契约）
+## 常驻服务（P1 已实现）
 
-`serve` 与 HTTP 服务端尚未实现。当前可先校验未来的服务配置；该命令不建库、不扫描、不监听：
+`serve` 在前台运行扫描调度和/或本机只读 API，直到 SIGINT/SIGTERM。它在建库前先校验配置，启动时检查来源目录、数据库捕获模式和采集租约；状态与扫描事件以 NDJSON 输出到 stdout。
 
 ```sh
-npm run cli -- config-check --config agent-trace.service.example.json
-npm run cli -- config-check --config path/to/service.json --db path/to/trace.sqlite
+npm run cli -- config-check --config path/to/service.json
+npm run cli -- serve --config path/to/service.json
+npm run cli -- serve --config path/to/service.json --db path/to/pilot.sqlite
 ```
 
-配置要求见[服务配置](docs/service-config.md)。示例默认关闭采集与 API；启用真实来源、正文和网络前必须显式替换路径、`capture_mode` 与 token 摘要。消费方拉取、授权视图和错误约定见[本机 API](docs/local-api.md)与[消费方 follow 约定](docs/consumer-follow.md)。
+配置要求见[服务配置](docs/service-config.md)，API 授权与错误见[本机 API](docs/local-api.md)。示例默认关闭采集与 API；启用真实来源、正文和网络前必须显式替换路径、`capture_mode` 与 token 摘要。采集与 API 都关闭时 `serve` 拒绝启动。
+
+采集按配置的来源扫描 `.jsonl`：首次 `backfill=none` 只记录基线，之后新文件或变化文件整文件重读并按事件身份去重；`backfill=all` 首次即导入当前文件。归档前按 `session_meta.cwd` 匹配项目，未知或歧义项目跳过并在状态中计数。单归档只允许一个采集租约；崩溃后租约过期可接管，重启会从已提交归档和扫描状态继续。
+
+不要同时运行两个采集进程；API-only 可设置 `collection.enabled=false`。消费方 `follow` worker 尚未实现（P2），当前仍需用 `export`/`import-archive`/`archive-import` 手动搬页，或由自己的脚本调用本机 API。
 
 本模块不根据目录名猜测身份；`--instance` 标识来源设备/运行环境，`--project` 是统一项目标识。同一会话的项目绑定固定。当前会重新读取所选文件，通过事件身份去重，不是基于字节偏移的 tail 守护进程。源文件必须是完整 LF/CRLF 分行的 Codex JSONL，未结束的尾行等待下次导入；完整坏行或原位置内容变化使该文件整次导入失败。
 
@@ -90,6 +95,6 @@ npm run verify:consumers
 
 脚本只在临时目录中使用合成会话，检查独立分页、重复导入、统计数值、正文隔离、源删除后证据读取、证据与确认知识分离、删除传播，结束后清理临时数据。测试与执行记录见 [验证记录](docs/validation.md)。
 
-首版不含常驻采集服务、HTTP 服务、多用户认证、自动经验提取或 Inspector UI 集成。数据协议与消费方独立游标已固定，后续适配器在同一入口接入。
+首版包含前台常驻采集服务与只读 HTTP API，不含自动消费方 worker、多用户认证、自动经验提取或 Inspector UI 集成。数据协议与消费方独立游标已固定，后续适配器在同一入口接入。
 
 导出流尚无按项目授权过滤。Agent Knowledge 的项目配置须允许导出页内所有项目，否则整批拒绝。授权范围较窄时使用单独归档库；不要手工删掉页内事件并保留全局游标。

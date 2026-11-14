@@ -3,6 +3,7 @@ import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { writeFileSync } from 'node:fs';
 import { Archive, sourceFiles } from './store.ts';
 import { describeServiceConfig, loadServiceConfig } from './config.ts';
+import { TraceService, type ServiceEvent } from './service.ts';
 import { ArchiveError, cursorOf, identifier, viewOf } from './types.ts';
 import { defaultDatabase } from './paths.ts';
 
@@ -17,6 +18,7 @@ Commands (all accept --db PATH, default .agent-trace/trace.sqlite):
   delete-session --runtime codex --instance ID --session ID
   status
   config-check --config PATH [--db PATH]
+  serve --config PATH [--db PATH]
   help
 
 Content capture saves selected original prompts, tools and visible reasoning.
@@ -25,17 +27,19 @@ contain private information and are independent copies with their own lifecycle.
 An existing .agent-archive/archive.sqlite remains the fallback when the new
 default database does not exist. An explicit --db always takes precedence.
 config-check validates a service configuration without creating a database,
-starting collection or opening a listener. The serve command and local HTTP API
-are specified in docs/local-api.md and are not implemented yet.
+starting collection or opening a listener. serve runs collection and/or the
+read-only loopback API in the foreground until SIGINT/SIGTERM; startup,
+scan and stop events are emitted as NDJSON. See docs/service-config.md and
+docs/local-api.md.
 `;
 const commandOptions: Record<string, ParseArgsConfig['options']> = {
   ingest: { source: { type: 'string', multiple: true }, instance: { type: 'string' }, project: { type: 'string' }, capture: { type: 'string' } },
   export: { after: { type: 'string' }, limit: { type: 'string' }, view: { type: 'string' }, output: { type: 'string' } },
   read: { event: { type: 'string' }, view: { type: 'string' } },
   'delete-session': { runtime: { type: 'string' }, instance: { type: 'string' }, session: { type: 'string' } },
-  status: {}, 'config-check': { config: { type: 'string' } }, help: {},
+  status: {}, 'config-check': { config: { type: 'string' } }, serve: { config: { type: 'string' } }, help: {},
 };
-function main(): void {
+async function main(): Promise<void> {
   const [command = 'help', ...args] = process.argv.slice(2);
   if (command === '--help' || command === '-h') { process.stdout.write(help); return; }
   if (!Object.hasOwn(commandOptions, command)) throw new ArchiveError('INVALID_INPUT', `Unknown command: ${command}`);
@@ -54,8 +58,29 @@ function main(): void {
   if (command === 'export' && (!Number.isSafeInteger(limit) || limit < 1 || limit > 10000)) throw new ArchiveError('INVALID_INPUT', '--limit must be 1..10000');
   const view = viewOf(v.view ?? 'metadata');
   const capture = v.capture === undefined ? undefined : viewOf(v.capture);
-  const configPath = command === 'config-check' ? identifier(v.config, '--config') : '';
+  const configPath = command === 'config-check' || command === 'serve' ? identifier(v.config, '--config') : '';
   let result: unknown;
+  if (command === 'serve') {
+    const config = loadServiceConfig(configPath, { database: typeof v.db === 'string' ? v.db : undefined });
+    const service = new TraceService(config, {
+      onEvent: (event: ServiceEvent) => process.stdout.write(`${JSON.stringify(event)}\n`),
+    });
+    await service.start();
+    await new Promise<void>(resolve => {
+      let stopping = false;
+      const shutdown = (reason: string): void => {
+        if (stopping) return;
+        stopping = true;
+        void service.stop(reason).then(() => resolve(), error => {
+          process.stderr.write(`${JSON.stringify({ error: { code: error instanceof ArchiveError ? error.code : 'STOP_FAILED', message: error instanceof Error ? error.message : 'Unknown stop error' } })}\n`);
+          resolve();
+        });
+      };
+      process.once('SIGINT', () => shutdown('SIGINT'));
+      process.once('SIGTERM', () => shutdown('SIGTERM'));
+    });
+    return;
+  }
   if (command === 'config-check') {
     const config = loadServiceConfig(configPath, { database: typeof v.db === 'string' ? v.db : undefined });
     result = describeServiceConfig(config);
@@ -89,7 +114,7 @@ function main(): void {
   if (command === 'export' && typeof v.output === 'string') writeFileSync(v.output, output, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
   else process.stdout.write(output);
 }
-try { main(); }
+try { await main(); }
 catch (error) {
   process.stderr.write(`${JSON.stringify({ error: { code: error instanceof ArchiveError ? error.code : 'ERROR', message: error instanceof Error ? error.message : 'Unknown error' } })}\n`);
   process.exitCode = 1;

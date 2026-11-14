@@ -1,6 +1,6 @@
 # 服务配置
 
-状态：P0 配置契约与校验已实现，可用 `config-check` 检查。前台 `serve`、扫描调度和 HTTP 监听尚未实现（P1），因此本文件描述的是已固定的配置格式，不是当前可启动的常驻服务。更新日期：2026-11-14。
+状态：P0 固定配置格式与校验，P1 已实现 `config-check`、前台 `serve`、扫描调度、单归档租约/心跳和 HTTP 监听。更新日期：2026-11-14。
 
 目标设计见[常驻采集与主动拉取](continuous-collection.md)，本机读取接口见[本机 API](local-api.md)，消费方约定见[消费方 follow 约定](consumer-follow.md)。
 
@@ -9,9 +9,12 @@
 ```sh
 node src/cli.ts config-check --config agent-trace.service.example.json
 node src/cli.ts config-check --config PATH --db OVERRIDE.sqlite
+node src/cli.ts serve --config PATH [--db OVERRIDE.sqlite]
 ```
 
 `config-check` 只读取并校验配置文件，不创建数据库、不扫描来源、不监听端口、不写访问日志。`--db` 与既有命令一致，显式覆盖配置里的数据库路径。
+
+`serve` 在前台运行到 SIGINT/SIGTERM：先校验配置并打开数据库，检查捕获模式；采集开启时获取单归档租约并周期性扫描，API 开启时只监听配置的回环地址。停止时不再调度新扫描、等待当前归档事务结束、关闭监听并释放租约。`collection.enabled` 与 `api.enabled` 都为 `false` 时拒绝启动。启动、扫描、错误和停止事件以 NDJSON 输出到 stdout，不包含 token、正文或原始对象。
 
 成功时输出规范化后的配置 JSON（相对路径已按配置文件目录解析）；`token_sha256` 不会回显。失败时退出码为 1，错误代码为 `INVALID_CONFIG`，消息给出字段路径，例如 `config.collection.sources[0].root: ...`。未知字段一律拒绝，避免拼写错误静默扩大采集范围或访问权限。
 
@@ -133,7 +136,7 @@ unset TOKEN
 - 不要用 `/`、整个 home 或过宽目录作为 allowlist；这会把该来源下所有会话归入同一项目。
 - 未知项目只跳过并可观察，不自动归入默认项目。日期目录可能混有多个项目，不能按目录名猜测归属。
 
-`projectForCwd` 已实现上述规则并有回归测试；采集器在 P1 中直接复用。被跳过的文件不写归档，扫描状态只作为优化，归档提交前不会推进检查点。
+`projectForCwd` 已实现上述规则并有回归测试；P1 扫描器直接复用。被跳过的文件不写归档，未匹配/歧义文件在扫描状态中计数；扫描状态只作为优化，已归档文件的检查点在该文件归档事务提交后才写入。
 
 ## 默认值汇总
 
@@ -148,8 +151,18 @@ unset TOKEN
 | API 客户端 | 无；启用 API 时必须显式配置 |
 | 页大小 | 请求默认 500，最大 1000（见[本机 API](local-api.md)） |
 
+## 采集状态与运行约束
+
+`serve` 在归档数据库内维护三张非事件表：`collection_lease`（单实例租约）、`collection_sources`（基线/最近扫描/错误）和 `collection_files`（来源文件身份、大小、mtime、结果）。它们不改变事件身份、`archive_id`、批次协议或消费方游标。
+
+- 同一归档同时只允许一个有效采集租约；第二个 `serve` 报 `COLLECTION_LOCKED`。租约默认 5 分钟，进程每 15 秒续租；崩溃或强杀后可在过期后接管。
+- 文件状态按文件身份（设备/ino）、大小、mtime/ctime 比较。变化才整文件重读，复用既有事件身份去重；导入成功后的检查点在该文件归档事务提交后写入，基线/未匹配项目是带版本与范围指纹的无导入决策；没有字节偏移 tail。
+- `backfill=none` 的首次成功扫描只写基线，不导入当时已有文件；之后新建或变化的文件才整文件导入。
+- 半行等待、完整坏行回滚、文件移动/复制去重、来源重写冲突和删除防复活均沿用归档事务语义。单来源失败只记该来源错误，继续处理其他来源。
+- `GET` 只读，不推进采集或消费进度。状态接口区分进程/心跳、最近扫描、来源错误与归档高水位。
+
 ## 当前范围与下一步
 
-已实现：严格配置解析、路径解析与兼容规则、项目/cwd 匹配、token 摘要与视图能力校验、请求与状态契约类型。
+已实现：严格配置解析、路径解析与兼容规则、项目/cwd 匹配、token 摘要与视图能力校验、请求与状态契约、`serve --config`、来源扫描调度、运行租约/心跳、SQLite/HTTP 生命周期、`GET /v1/events`、`GET /v1/status`。
 
-未实现：`serve --config` 命令、来源扫描调度、运行锁/心跳、SQLite 与 HTTP 生命周期、`GET /v1/events`、`GET /v1/status`。这些属于 [TODO](../../TODO.md) 的 P1；消费方 `follow` 属于 P2。不要因为配置可校验就假定常驻采集或自动同步已经启用。
+未实现：消费方 `follow` 自动拉取（P2）、按项目过滤的事件流、非回环监听、浏览器 UI、长期运行的真实 Codex 宿主验收与网络故障/超时矩阵。不要因为服务可启动就假定自动消费链已经可用。

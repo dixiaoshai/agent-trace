@@ -1,6 +1,6 @@
 # 正文归档（content 捕获）
 
-状态：2026-11-14 实现脱敏、外置大输出、独立 content 库配置与消费方引用兼容，并完成一次**一次性真实试点**（三个项目 + 父级工作区，50 会话 / 17,086 事件，Knowledge `follow` 全量拉取与检索核对）；未做常驻采集。试点数字、脱敏命中/误报、孤儿 blob 缺陷、保留与回滚见[验证记录的真实试点一节](validation.md#正文归档真实试点2026-11-14)。目标与范围见工作区 [TODO](../../TODO.md) 的“正文归档”一节，协议细节见 [v1 协议](protocol.md)，服务配置见[服务配置](service-config.md)。
+状态：2026-11-14 实现脱敏、外置大输出、独立 content 库配置与消费方引用兼容，并完成**一次性真实试点**（三个项目 + 父级工作区，50 会话 / 17,086 事件，Knowledge `follow` 全量拉取与检索核对）；2026-11-14 起以两个 launchd 登录项常驻（见[常驻运行](#常驻运行macos-launchd)）。试点数字、脱敏命中/误报、孤儿 blob 缺陷、保留与回滚见[验证记录的真实试点一节](validation.md#正文归档真实试点2026-11-14)。目标与范围见工作区 [TODO](../../TODO.md) 的“正文归档”一节，协议细节见 [v1 协议](protocol.md)，服务配置见[服务配置](service-config.md)。
 
 正文归档用于执行复盘、证据检索与后续经验提炼。它只属于 Trace 的 content 捕获模式，默认的 metadata 模式不受影响，也不会因为升级代码自动补回历史正文。
 
@@ -111,9 +111,48 @@ node src/cli.ts serve --config /absolute/path/agent-trace.content.example.json
 
 回滚：停止 content 采集进程，保留 metadata 库与两个消费方的既有游标。`content-state/` 下的数据库和 blob 目录是独立副本，按保留策略删除即可；不要把它当作正式库，也不要删除 metadata 库来“清理正文”。真实试点结束后，把实际会话数、脱敏命中、外置文件数量与复盘结论写入 [验证记录](validation.md)。
 
+## 常驻运行（macOS launchd）
+
+2026-11-14 起 content 采集可以常驻：`scripts/install-content-service.ts` 安装两个登录项，不再依赖前台 shell。
+
+| 登录项 | 作用 | 日志 |
+| --- | --- | --- |
+| `local.agent-trace-content` | `serve --config <content 配置>`：扫描来源、脱敏入库、提供回环 API | `~/.local/share/agent-trace/content.log` / `content.err` |
+| `local.agent-knowledge-follow` | Knowledge `follow`：把 content 页续读进证据库 | `~/.local/share/agent-knowledge/follow.log` / `follow.err` |
+
+```sh
+npm run install:content -- --dry-run   # 打印 plist 计划，令牌显示为 <redacted>
+npm run install:content                # 停止旧任务 -> config-check -> gc -> 启动
+npm run install:content -- --uninstall # 停止并移除登录项，保留数据库与日志
+```
+
+默认路径：配置 `~/.local/share/agent-trace/content.json`、令牌 `content.token`、Knowledge follow 配置 `~/.local/share/agent-knowledge/content.follow.json`，Knowledge 仓库默认取同级目录 `../agent-knowledge`。可用 `--config`、`--token-file`、`--knowledge-follow`、`--knowledge-dir`、`--no-knowledge` 覆盖。
+
+行为与边界：
+
+- 安装器不会替你开启采集：配置必须已是 `capture_mode: "content"` 且 `collection.enabled = true`；不满足就报错退出。
+- 安装顺序固定为“停止旧任务 → `config-check` → `gc` → 写入 plist → bootstrap”。先停再回收，避免删除正在写入的 blob；`gc` 失败则中止安装。
+- 两个任务都是 `RunAtLoad` + `KeepAlive` + `ThrottleInterval=30`；崩溃后由 launchd 重启，重启会重新获取采集租约、从已提交游标继续。
+- 令牌只写进 plist 的 `EnvironmentVariables`（plist `0600`），不写入日志；`--dry-run` 输出会把非 `PATH` 的环境变量显示为 `<redacted>`。
+- 常驻不改变协议：仍是单归档租约、单 worker、按 `archive_id` 独立游标；Stats 继续只读 metadata。
+- 首次回补仍是显式动作。已回补过的库把 `collection.backfill` 改回 `"none"`，否则每次启动都会重扫全部历史（去重后事件不重复，但会浪费时间）。
+
+### blob 回收
+
+`gc` 删除配置目录里名字形如 `<event_id>-<sha256>.txt` 且没有任何已提交事件引用的文件。只删除配置的 blob 目录下的这一类文件名，不会碰其他文件。
+
+```sh
+node src/cli.ts gc --config ~/.local/share/agent-trace/content.json --dry-run
+node src/cli.ts gc --config ~/.local/share/agent-trace/content.json
+```
+
+- 正常运行时孤儿文件应保持为 0：导入器现在只在确认会提交该 revision 后才保留 blob，旧 revision、已删除会话、冲突和存储/SQL 异常都会清掉本次写入但没有已提交事件引用的文件。
+- 只有进程在写 blob 与提交事务之间被强杀（例如 `kill -9`、崩溃）才会留下孤儿；安装器启动前会回收一次，长期运行建议定期执行 `gc`。
+- 归档保留期仍由使用者决定：`gc` 只清未被引用的文件，不按时间删除事件或 blob。要结束试点请按[验证记录](validation.md#正文归档真实试点2026-11-14)的清理命令整体删除。
+
 ## 尚未覆盖
 
-- 真实试点已执行一次（一次性回补，未常驻），但结论有两个缺陷待修：`Basic/Digest/Token` 后跟普通单词会误伤散文；旧 revision 被跳过时已写出的 blob 不会被清理（首次回补 107 个文件里 75 个未被引用）。详见验证记录。
-- 未实现 blob 自动垃圾回收（事务回滚、旧 revision 早退留下的孤立文件）、blob 加密或独立保留期策略。
+- 脱敏仍有过匹配待修：`Basic/Digest/Token` 后跟普通单词会误伤散文（`basic instructions`）。这是可读性问题，不是泄漏；修正规则需要同时评估漏检。
+- blob 不再由旧 revision/异常路径产生孤儿，`gc` 可回收强杀留下的文件；但未实现按时间删除事件、blob 加密或独立保留期策略。
 - 未把外置正文内容复制进 Knowledge 数据库；大输出的检索命中基于引用元数据，正文读取需要访问对应 blob 并校验哈希。
 - 未做按项目过滤的 content 流；窄范围仍需独立归档。

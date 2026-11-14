@@ -17,10 +17,13 @@ Commands (all accept --db PATH, default .agent-trace/trace.sqlite):
   read --event ID [--view metadata|content]
   delete-session --runtime codex --instance ID --session ID
   status
+  gc --config PATH [--db PATH] [--dry-run]
   config-check --config PATH [--db PATH]
   serve --config PATH [--db PATH]
   help
 
+gc removes blob files in the configured content archive that no committed event
+cites (for example files left by an interrupted import); --dry-run only reports.
 Content capture saves selected original prompts, tools and visible reasoning.
 Capture mode is fixed per database; metadata is the default. Export files may
 contain private information and are independent copies with their own lifecycle.
@@ -37,7 +40,8 @@ const commandOptions: Record<string, ParseArgsConfig['options']> = {
   export: { after: { type: 'string' }, limit: { type: 'string' }, view: { type: 'string' }, output: { type: 'string' } },
   read: { event: { type: 'string' }, view: { type: 'string' } },
   'delete-session': { runtime: { type: 'string' }, instance: { type: 'string' }, session: { type: 'string' } },
-  status: {}, 'config-check': { config: { type: 'string' } }, serve: { config: { type: 'string' } }, help: {},
+  status: {}, gc: { config: { type: 'string' }, 'dry-run': { type: 'boolean' } },
+  'config-check': { config: { type: 'string' } }, serve: { config: { type: 'string' } }, help: {},
 };
 async function main(): Promise<void> {
   const [command = 'help', ...args] = process.argv.slice(2);
@@ -62,7 +66,8 @@ async function main(): Promise<void> {
   if (command === 'export' && (!Number.isSafeInteger(limit) || limit < 1 || limit > 10000)) throw new ArchiveError('INVALID_INPUT', '--limit must be 1..10000');
   const view = viewOf(v.view ?? 'metadata');
   const capture = v.capture === undefined ? undefined : viewOf(v.capture);
-  const configPath = command === 'config-check' || command === 'serve' ? identifier(v.config, '--config') : '';
+  const configPath = command === 'config-check' || command === 'serve' || command === 'gc'
+    ? identifier(v.config, '--config') : '';
   let result: unknown;
   if (command === 'serve') {
     const config = loadServiceConfig(configPath, { database: typeof v.db === 'string' ? v.db : undefined });
@@ -88,6 +93,11 @@ async function main(): Promise<void> {
   if (command === 'config-check') {
     const config = loadServiceConfig(configPath, { database: typeof v.db === 'string' ? v.db : undefined });
     result = describeServiceConfig(config);
+  } else if (command === 'gc') {
+    if (!configPath) throw new ArchiveError('INVALID_INPUT', 'gc requires --config: the blob directory comes from the service configuration');
+    const config = loadServiceConfig(configPath, { database: typeof v.db === 'string' ? v.db : undefined });
+    const archive = new Archive(config.database, undefined, config.content);
+    try { result = archive.pruneOrphanBlobs({ dry_run: v['dry-run'] === true }); } finally { archive.close(); }
   } else {
     const archive = new Archive(v.db as string | undefined ?? defaultDatabase(), capture);
     try {

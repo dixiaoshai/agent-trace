@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { chmodSync, mkdirSync, readFileSync, readdirSync, lstatSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, readdirSync, lstatSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { NORMALIZER_VERSION, normalize, parseRecords, sessionCwd as codexSessionCwd } from './codex.ts';
@@ -16,6 +16,15 @@ import {
 } from './types.ts';
 
 const MAX_FILE_BYTES = 128 * 1024 * 1024;
+
+export interface BlobPruneResult {
+  directory: string;
+  files: number;
+  referenced: number;
+  orphans: number;
+  removed: number;
+  dry_run: boolean;
+}
 
 /**
  * The CLI passes a fixed project. The scanner passes a resolver so the project
@@ -110,9 +119,23 @@ export class Archive {
       : normalize(records, absolutePath, instanceId, projectId, this.captureMode, titles);
     // Content protection runs before the archive transaction: a blob write
     // failure aborts the import instead of committing an unprotected event.
-    const events = this.captureMode === 'content'
-      ? normalized.map(event => protectEvent(event, this.content))
-      : normalized;
+    // Every written path is tracked so a discarded revision (older rollout,
+    // deleted session, conflict, storage or SQL error) cannot leave files that
+    // no committed event references.
+    const written: string[] = [];
+    let events: Event[];
+    try {
+      events = this.captureMode === 'content'
+        ? normalized.map(event => {
+            const protectedEvent = protectEvent(event, this.content);
+            written.push(...referencedBlobs(JSON.stringify(protectedEvent)));
+            return protectedEvent;
+          })
+        : normalized;
+    } catch (error) {
+      this.removeUnreferencedBlobs(written);
+      throw error;
+    }
     const first = events[0]!;
     // A rollout can be rewritten in place, and Codex can leave several files
     // for one session identity (resumed or subagent rollouts). Like the direct
@@ -141,6 +164,9 @@ export class Archive {
         || rank.revision_at > current.revision_at
         || (rank.revision_at === current.revision_at && rank.event_count >= current.event_count);
       if (!apply) {
+        // The revision is older than what is stored: drop the files this
+        // attempt just wrote instead of keeping unreachable content.
+        this.removeUnreferencedBlobs(written);
         this.db.exec('COMMIT');
         return { imported: 0, skipped: events.length, pending };
       }
@@ -182,7 +208,55 @@ export class Archive {
       const kept = new Set(events.flatMap(event => referencedBlobs(JSON.stringify(event))));
       removeBlobs(removedBlobs.filter(blob => !kept.has(blob)), this.content);
       return { imported, skipped, pending };
-    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      this.removeUnreferencedBlobs(written);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete files written by an import attempt that was not committed (or was
+   * superseded), skipping any path a committed event already cites.
+   */
+  private removeUnreferencedBlobs(candidates: string[]): void {
+    if (this.captureMode !== 'content' || !candidates.length) return;
+    const cited = this.db.prepare('SELECT 1 FROM events WHERE instr(payload, ?) > 0 LIMIT 1');
+    const orphans = [...new Set(candidates)].filter(candidate => !cited.get(candidate));
+    removeBlobs(orphans, this.content);
+  }
+
+  /**
+   * Remove blob files that no committed event cites. Only files directly inside
+   * the configured directory whose name is `<event_id>-<sha256>.txt` are
+   * candidates, so a wrong path cannot delete unrelated user files.
+   */
+  pruneOrphanBlobs(options: { dry_run?: boolean } = {}): BlobPruneResult {
+    if (this.captureMode !== 'content') {
+      throw new ArchiveError('CAPTURE_MODE', 'Blob pruning requires a content archive');
+    }
+    const directory = path.resolve(this.content.blob_directory);
+    const referenced = new Set<string>();
+    const rows = this.db.prepare('SELECT payload FROM events').iterate();
+    try {
+      for (const row of rows) {
+        for (const blob of referencedBlobs(String(row.payload))) referenced.add(path.resolve(blob));
+      }
+    } finally { rows.return?.(); }
+    let names: string[] = [];
+    try { names = readdirSync(directory); } catch { names = []; }
+    const pattern = /^[0-9a-f]{64}-[0-9a-f]{64}\.txt$/;
+    let files = 0, orphans = 0, removed = 0;
+    for (const name of names) {
+      if (!pattern.test(name)) continue;
+      files++;
+      const full = path.join(directory, name);
+      if (referenced.has(full)) continue;
+      orphans++;
+      if (options.dry_run) continue;
+      try { rmSync(full); removed++; } catch { /* already gone or not removable */ }
+    }
+    return { directory, files, referenced: files - orphans, orphans, removed, dry_run: options.dry_run === true };
   }
 
   /** Highest committed archive sequence. Deletions leave legitimate gaps, so this is not an unread-event count. */

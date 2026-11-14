@@ -203,7 +203,7 @@ P0 当时明确未验证（P1 已补齐，见下节）：没有实现或启动 `
 - 51 个 `content_ref`、32 个唯一文件、7,153,689 字节；路径在 blob 目录内、长度与 SHA-256 全部校验通过，权限 `0600`（目录 `0700`），没有截断。
 - 磁盘实际 107 个文件，其中 75 个（70%）没有被任何已提交事件引用，全部产生于首次回补（20:04 批次）。这些文件不含比已提交内容更多的信息，但说明清理逻辑有缺口。
 - 根因（读代码确认）：`Archive.importFile` 在按 revision 排名决定是否导入**之前**就写出 blob；当判定为旧 revision（`apply === false`）而早退、或命中 `SESSION_DELETED`/`SOURCE_CONFLICT` 时，刚写入的文件不会被删除。文档所述“替换 revision 会清理 blob”只覆盖“已提交后再被替换/删除”的路径。
-- 建议修复方向（未在本 PR 实施）：把 revision 判定移到写 blob 之前，或在早退/异常路径删除本次写出且未被已提交事件引用的文件，并补一条“旧 revision 被跳过时不留孤儿文件”的回归。当前保留 75 个孤儿文件作为发现证据。
+- 修复（同一批次实现）：导入器现在记录本次写出的 blob，在处理旧 revision、已删除会话、项目冲突以及存储/SQL 异常时删除这些文件中没有被已提交事件引用的部分；另加 `gc` 命令回收历史遗留。新回归覆盖“旧 revision 被跳过”和“已删除会话拒绝导入”两条路径，`gc` 只删形如 `<event_id>-<sha256>.txt` 的未引用文件。修复后对这 75 个文件执行 `gc`，已全部回收（119 MB 剩余，32 个文件全部可校验）。
 
 ### 复盘效果
 
@@ -243,3 +243,36 @@ rm -f  ~/.local/share/agent-knowledge/pilot.sqlite* ~/.local/share/agent-knowled
 - 未在真实会话上验证 `delete-session` 的删除传播（合成测试已覆盖）；未做 Knowledge MCP/skill 在真实宿主中的 content 检索验收。
 - 未给 Stats 授权 content 归档（按设计 Stats 只读 metadata），因此“Stats 面对 content 归档仍无正文”只在合成与配置层面验证。
 - 未解决脱敏过匹配与孤儿 blob 两个缺陷；未由未参与实现的 reviewer 复审本试点结论。
+
+## 常驻 content 采集（2026-11-14）
+
+把试点库变成常驻服务：不再一次性回补，而是 launchd 托管扫描、脱敏入库，Knowledge `follow` 常驻续读。仍然只有三个项目 + 父级工作区的范围，正式 metadata 库、Stats 库和 Stats 的 LaunchAgent 未改。
+
+### 代码与配置
+
+- `src/store.ts`：导入器记录本次写入的 blob，在旧 revision（`apply === false`）、`SESSION_DELETED`、`SOURCE_CONFLICT`、存储或 SQL 异常时删除这些文件中**没有被任何已提交事件引用**的部分；新增 `pruneOrphanBlobs()`，只把 blob 目录内形如 `<event_id>-<sha256>.txt` 且未被引用的文件当作候选。
+- `src/cli.ts`：新增 `gc --config PATH [--db PATH] [--dry-run]`，输出 `{directory,files,referenced,orphans,removed,dry_run}`；metadata 库调用会报 `CAPTURE_MODE`。
+- `scripts/install-content-service.ts` + `npm run install:content`：安装 `local.agent-trace-content` 与 `local.agent-knowledge-follow`。顺序为“停止旧任务 → `config-check` → `gc` → 写 plist → bootstrap”，支持 `--dry-run`（令牌显示为 `<redacted>`）与 `--uninstall`。
+- 配置：`content-pilot.json`/`pilot.*` 更名为 `~/.local/share/agent-trace/content.json`、`content.token`，以及 `~/.local/share/agent-knowledge/content.json`、`content.follow.json`、`content.sqlite*`；`collection.backfill` 改为 `"none"`（历史已回补），Knowledge follow 的 `idle_seconds` 15 / `max_backoff_seconds` 300。
+
+### 实际执行
+
+| 步骤 | 命令/动作 | 结果 |
+| --- | --- | --- |
+| 回归 | `npm run check` | 类型检查、59 项测试（+2）与构建通过 |
+| 孤儿回收 | `node src/cli.ts gc --config .../content.json --dry-run` → `gc` | 107 个文件、32 引用、75 孤儿；实际删除 75，目录 119 MB、剩 32 个文件 |
+| 安装 | `node --experimental-strip-types scripts/install-content-service.ts` | 两个登录项 `state = running`，`KeepAlive`/`RunAtLoad` |
+| 首轮扫描 | `~/.local/share/agent-trace/content.log` | `files=190 imported=334 skipped=306 pending=0 unmatched_projects=103 errors=0`；`backfill: "none"` |
+| Knowledge 续读 | `~/.local/share/agent-knowledge/follow.log` | 从游标 17,142 续到 17,488，证据库 17,432 行，`last_error_code` 清空 |
+| 无损校验 | 逐条比对 `content_ref` | 32 个文件、51 个引用、字节数与 SHA-256 全部通过 |
+| 重启 | `launchctl kickstart -k gui/$(id -u)/local.agent-trace-content` | 旧进程输出 `serve.stopped`（SIGTERM），新进程同 archive_id 重新获取租约，`imported=7`，无重复 |
+| 重启后收口 | 等待一轮扫描 + follow | 新增 4 条事件被拉取，游标 17,500，证据库 17,444 |
+| 常驻期间孤儿 | `gc --dry-run`（服务运行中，只读） | `files=32 referenced=32 orphans=0` |
+| 日志 | `content.log` / `content.err` / `follow.log` / `follow.err` | 只有 NDJSON 计数与状态；`content.err`、`follow.err` 为空；日志 `0600` |
+
+### 明确未验证
+
+- 没有做长时间（天级）运行观察，未验证磁盘增长曲线、归档保留与定期 `gc` 的节奏。
+- 未做真实 `kill -9` / 断电留下的孤儿回收演练；`gc` 只在已有 75 个真实孤儿上验证过。
+- 未修脱敏过匹配（`Basic/Digest/Token` + 普通单词），也未做 reviewer 独立复审。
+- Knowledge 侧未安装 MCP/skill 接入，仍只有 `follow` 与 CLI 检索。

@@ -1,6 +1,6 @@
 # 消费方 follow 约定
 
-状态：P0 已固定命令名、配置键、状态输出和错误分类；Trace `serve` 与只读 API 已在 P1 实现，两个消费方的 worker 尚未实现（P2）。更新日期：2026-11-14。
+状态：P0 已固定命令名、配置键、状态输出和错误分类；Trace `serve` 与只读 API 已在 P1 实现，Agent Stats 与 Agent Knowledge 的 follow worker 均已实现并有合成/真实进程验证（P2）。更新日期：2026-11-14。
 
 本约定适用于 Agent Stats 与 Agent Knowledge 各自独立实现的同步 worker。Trace 只提供[只读事件 API](local-api.md)，不保存消费方列表、投递队列或确认游标，也不调用消费方命令。消费进度只在消费方自己的数据库中维护。
 
@@ -12,10 +12,11 @@
 | Agent Stats | `agent-stats follow --config PATH [--db PATH]` | 本文 `agent-stats.follow.json` | `metadata` |
 | Agent Knowledge | `agent-knowledge follow --config PATH` | 本文 `agent-knowledge.follow.json` | `content` |
 
-- 三个进程独立前台运行，谁先启动都可以；Trace 不等待消费方，消费方不需要看板或 MCP 客户端保持连接。当前只有 Trace 进程可按本文启动；两个 `follow` 命令仍是 P2 契约。
+- 三个进程独立前台运行，谁先启动都可以；Trace 不等待消费方，消费方不需要看板或 MCP 客户端保持连接。两个 `follow` 命令均已实现：Stats 用 Python，Knowledge 用 TypeScript，各自读取自己的配置和游标。
 - Stats 的 `follow` 与看板 `serve` 可分别启停；Knowledge 的 `follow` 与 `serve`（stdio MCP）可分别启停。关闭 MCP 不得停止拉取，关闭看板不得停止 Stats 拉取。
 - `follow` 是独立的 Trace 消费模式。不能在 `follow` 中直读 Codex 日志，也不能把 Stats 现有 `--no-import` 当作完整的 Trace 模式。
 - 前台运行，`Ctrl+C`（SIGINT）或 SIGTERM 触发优雅停止：不再取新页，等待当前本地事务结束，释放租约，输出 `follow.stopped` 后退出。不得在事务中途强制退出。
+- Knowledge 的 `follow` 只打开证据库 `<config.database>.archive-evidence.sqlite` 和回环 HTTP，不启动 MCP、不打开知识库；`serve`（stdio MCP）与 `follow` 可同时运行，关闭 MCP 不影响拉取。
 - `--db`（Stats）覆盖 follow 配置中的目标数据库，用于显式试点；不提供隐式数据库切换。Knowledge 的数据库与项目授权来自其引用的知识配置，follow 命令不得另建一套授权。
 
 ## 配置文件
@@ -140,4 +141,8 @@ worker 在 stdout 输出逐行 JSON（NDJSON），每行一个事件，全部带
 
 ## 验证边界
 
-P2 实现时必须用临时数据库和合成日志验证：追平与空闲、分页续取、重启恢复、断网/超时退避、双实例拒绝、非法页不推进、`archive_id` 变化暂停、删除墓碑、Stats 不触碰原日志、MCP 离线时 Knowledge 继续拉取、看板/MCP 并发读取。当前尚未实现或验证这些 worker；不要把本文约定当作已启用功能。
+两个 worker 已用临时数据库与合成 Trace API 验证：追平与空闲、分页续取、重启恢复、断网/超时/5xx 退避、双实例拒绝与死进程接管、非法页不推进、`archive_id`/`trace_url` 变化暂停、删除墓碑、Stats 不触碰原日志、MCP 离线时 Knowledge 继续拉取、证据库并发读取。
+
+2026-11-14 真实进程端到端（`npm run verify:follow`）：临时 content 归档 + 真实 `agent-trace serve`（API only）+ 真实 Stats `follow` + 真实 Knowledge `follow`。验证追加日志后两个消费方自动更新；分别停止任一消费方时另一方与 Trace 继续工作；重启后从各自已提交游标补取；Stats 会话/Token/工具计数不重复且不含工具正文；Knowledge 逐事件无重复。该脚本使用合成 fixture，可由 `AGENT_STATS_DIR`/`AGENT_KNOWLEDGE_DIR` 指向未合并的 worktree。
+
+仍未验证：真实 Codex/pi 产出的长期同步、真实网络中断/Trace 重启、目标库重建交互、blob 外置正文的消费方读取、跨机部署和 reviewer 独立审查。

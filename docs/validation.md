@@ -127,3 +127,23 @@ P0 当时明确未验证（P1 已补齐，见下节）：没有实现或启动 `
 - 未在真实 Codex/pi 历史或三个试点项目上启用 content 采集，未统计真实脱敏命中/误报，未评估真实复盘价值；也未安装 LaunchAgent 或修改正式 metadata 库。
 - 未实现 blob 自动垃圾回收、加密、独立保留期，也未把外置正文复制到 Knowledge；大输出正文读取仍需访问 blob 并按哈希校验。
 - 未运行 Stats/Knowledge `follow` 端到端、断网/超时矩阵或未参与实现的 reviewer 审查。
+
+## follow 真实进程端到端（2026-11-14）
+
+实际执行：`npm run verify:follow`，使用临时目录、回环端口、合成 Codex fixture，启动真实 `agent-trace serve`（API only）、真实 Python Agent Stats `follow` 和真实 TypeScript Agent Knowledge `follow`（未合并分支通过 `AGENT_KNOWLEDGE_DIR` 指向 worktree）。未读取用户真实历史，未改动正式数据库或 LaunchAgent。
+
+结果（脚本输出）：
+
+```json
+{"passed":true,"synthetic_only":true,"trace_high_watermark":15,"stats":{"sessions":1,"turns":1,"tokens":140,"tools":1},"knowledge_appended_events":4,"independent_stop_and_resume":true,"terminal_cursor":14}
+```
+
+验证内容：
+
+- 初始 11 个事件由两个 worker 分别拉到；`GET` 不改变采集高水位，Stats 得到 1 会话 / 140 token / 1 工具调用，Knowledge 可按项目检索 content 证据。
+- 向合成源追加整行并再次 `ingest`：两个独立游标自动前进（Stats 11→12），无需手工搬批次。
+- 停止 Stats 后追加：Knowledge 与 Trace 继续工作，Stats 游标冻结且统计 Token 不变；重启 Stats 从冻结游标补取（12→13），Token 仍为 140、工具仍为 1，统计库无工具正文。
+- 停止 Knowledge 后追加：Stats 继续到 14；重启 Knowledge 补齐证据，无重复事件 ID。
+- 两个消费方都停止后追加：Trace 仍可 ingest 并提供 `/v1/status`（高水位 15）；重启 Knowledge 从离线游标补到 4 条追加事件，检索结果无重复。
+
+明确未覆盖：真实 Codex/pi 长跑、真实网络中断/Trace 重启/租约过期矩阵、跨机部署、目标库重建交互、blob 外置正文读取、未参与实现的 reviewer 审查。

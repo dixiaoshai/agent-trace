@@ -95,7 +95,16 @@ npm run verify:consumers
 
 脚本只在临时目录中使用合成会话，检查独立分页、重复导入、统计数值、正文隔离、源删除后证据读取、证据与确认知识分离、删除传播，结束后清理临时数据。测试与执行记录见 [验证记录](docs/validation.md)。
 
-首版包含前台常驻采集服务与只读 HTTP API，不含自动消费方 worker、多用户认证、自动经验提取或 Inspector UI 集成。数据协议与消费方独立游标已固定，后续适配器在同一入口接入。
+验证两个真实 follow worker 与真实 `serve` 的进程级链路（需要 Agent Stats 与 Agent Knowledge 的依赖就绪）：
+
+```sh
+npm run verify:follow
+# 未合并的分支可用 AGENT_STATS_DIR / AGENT_KNOWLEDGE_DIR 指向对应 worktree
+```
+
+脚本使用临时 content 归档、回环端口和合成 fixture，验证追加日志自动到达两侧、分别停止/重启消费方、独立游标与不重复计数，结束后清理临时数据。它不读取用户日志、不接触正式数据库。
+
+当前包含前台常驻采集服务与只读 HTTP API，两个消费方的自动拉取 worker 已实现；仍不含多用户认证、自动经验提取或 Inspector UI 集成。数据协议与消费方独立游标已固定，后续适配器在同一入口接入。
 
 导出流尚无按项目授权过滤。Agent Knowledge 的项目配置须允许导出页内所有项目，否则整批拒绝。授权范围较窄时使用单独归档库；不要手工删掉页内事件并保留全局游标。
 

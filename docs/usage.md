@@ -2,7 +2,7 @@
 
 更新日期：2026-11-14。以下先使用合成示例；真实来源只在明确选定后导入。
 
-本文命令均针对当前手动流程。常驻采集与消费方 follow 命令尚未实现；下一阶段已确定不用 hook，由两个消费方主动拉取，见[设计](continuous-collection.md)和 [TODO](../../TODO.md)。
+本文命令均针对当前手动流程。P0 已固定并实现服务配置校验（`config-check`）及本机 API/follow 契约；常驻 `serve`、HTTP 服务端和消费方 `follow` 尚未实现。下一阶段已确定不用 hook，由两个消费方主动拉取，见[服务配置](service-config.md)、[本机 API](local-api.md)、[消费方 follow 约定](consumer-follow.md)、[设计](continuous-collection.md)和 [TODO](../../TODO.md)。
 
 ## 环境与安装
 
@@ -97,6 +97,17 @@ node src/cli.ts export --db .agent-trace/demo.sqlite --after 11 --view metadata 
 没有新事件时返回空页与当前游标，属于正常结果。消费失败时不要提前记下导出的 `next_cursor`；只采用消费成功回执。回执丢失可以重试原成功页，消费者会返回已提交的当前游标。
 
 目前没有自动循环或订阅功能；`status` 只显示归档概况，不负责拉取来源或消费方进度。
+
+## 校验常驻服务配置（尚未启动）
+
+P0 只提供配置校验，不创建数据库、不扫描来源、不监听端口：
+
+```sh
+node src/cli.ts config-check --config agent-trace.service.example.json
+node src/cli.ts config-check --config path/to/service.json --db path/to/trace.sqlite
+```
+
+示例默认关闭采集与 API。正式启用前按[服务配置](service-config.md)替换来源、项目 `cwd_allowlist`、数据库、捕获模式和 token 摘要；`config-check` 通过不代表目录存在或数据库捕获模式匹配。`serve` 尚未实现，不要据此启动常驻任务。
 
 ## 读取归档本身的证据
 

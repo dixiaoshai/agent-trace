@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, readFileSync, readdirSync, lstatSync } from 'node
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { NORMALIZER_VERSION, normalize, parseRecords } from './codex.ts';
-import { ArchiveError, cursorOf, hash, identifier, viewOf, type Batch, type Event, type View } from './types.ts';
+import { ArchiveError, cursorOf, hash, identifier, viewOf, type ArchiveStatus, type Batch, type Event, type View } from './types.ts';
 
 const MAX_FILE_BYTES = 128 * 1024 * 1024;
 export class Archive {
@@ -134,13 +134,13 @@ export class Archive {
       this.db.exec('COMMIT'); return { deleted: true, event_id: event.event_id };
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
-  status(): object {
+  status(): ArchiveStatus {
     return {
       schema_version: 1, archive_id: this.archiveId, capture_mode: this.captureMode,
       high_watermark: this.highWatermark(),
-      events: this.db.prepare('SELECT count(*) AS n FROM events').get()!.n,
-      sessions: this.db.prepare('SELECT count(*) AS n FROM sessions WHERE deleted=0').get()!.n,
-      deleted_sessions: this.db.prepare('SELECT count(*) AS n FROM sessions WHERE deleted=1').get()!.n,
+      events: Number(this.db.prepare('SELECT count(*) AS n FROM events').get()!.n),
+      sessions: Number(this.db.prepare('SELECT count(*) AS n FROM sessions WHERE deleted=0').get()!.n),
+      deleted_sessions: Number(this.db.prepare('SELECT count(*) AS n FROM sessions WHERE deleted=1').get()!.n),
     };
   }
 }

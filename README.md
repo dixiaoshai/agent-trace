@@ -8,7 +8,7 @@
 
 当前闭环：**明确选择 Codex JSONL → 本地归档 → metadata/content 批次导出 → 两个消费方独立续读**。默认不扫描用户历史，不调用模型、不联网、不重新执行日志中的工具。
 
-下一阶段采用 **无 hook 常驻采集 + 消费方主动拉取**：Trace 增加采集循环和只读事件 API，Stats 与 Knowledge 分别在自身项目实现同步任务。Trace 不维护下游清单、投递状态或执行下游命令。这是已确认方案，代码尚未实现，见[设计](docs/continuous-collection.md)与[实施 TODO](../TODO.md)。
+下一阶段采用 **无 hook 常驻采集 + 消费方主动拉取**：Trace 增加采集循环和只读事件 API，Stats 与 Knowledge 分别在自身项目实现同步任务。Trace 不维护下游清单、投递状态或执行下游命令。P0 已完成严格的服务配置校验，并固定本机 API 与消费方 follow 契约；`serve`/HTTP 服务端/`follow` 尚未实现。见[服务配置](docs/service-config.md)、[本机 API](docs/local-api.md)、[消费方 follow 约定](docs/consumer-follow.md)、[设计](docs/continuous-collection.md)与[实施 TODO](../TODO.md)。
 
 ## 文档
 
@@ -33,6 +33,17 @@ npm run cli -- export --db .agent-trace/demo.sqlite --view content --limit 10000
 ```
 
 输出文件使用 `0600` 权限并拒绝覆盖已有文件。每个消费方成功导入后保存并报告自己的 `cursor`；下一次导出用该值作为 `--after`。`has_more=true` 时继续取下一页，即使没有新源文件也要取完。不要把一方的游标用于另一方。相同文件再次导入、移到归档目录或复制后导入都不会重复写入。
+
+## 常驻服务配置（P0 契约）
+
+`serve` 与 HTTP 服务端尚未实现。当前可先校验未来的服务配置；该命令不建库、不扫描、不监听：
+
+```sh
+npm run cli -- config-check --config agent-trace.service.example.json
+npm run cli -- config-check --config path/to/service.json --db path/to/trace.sqlite
+```
+
+配置要求见[服务配置](docs/service-config.md)。示例默认关闭采集与 API；启用真实来源、正文和网络前必须显式替换路径、`capture_mode` 与 token 摘要。消费方拉取、授权视图和错误约定见[本机 API](docs/local-api.md)与[消费方 follow 约定](docs/consumer-follow.md)。
 
 本模块不根据目录名猜测身份；`--instance` 标识来源设备/运行环境，`--project` 是统一项目标识。同一会话的项目绑定固定。当前会重新读取所选文件，通过事件身份去重，不是基于字节偏移的 tail 守护进程。源文件必须是完整 LF/CRLF 分行的 Codex JSONL，未结束的尾行等待下次导入；完整坏行或原位置内容变化使该文件整次导入失败。
 

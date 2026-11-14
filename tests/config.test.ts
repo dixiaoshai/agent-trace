@@ -213,3 +213,11 @@ test('token hashing is stable and config-check is side-effect free', t => {
   const invalid = writeConfig(dir, { schema_version: 1, collection: { enabled: true, sources: [] }, api: { enabled: false } }, 'invalid.json');
   assert.throws(() => execFileSync(process.execPath, [cli, 'config-check', '--config', invalid], { encoding: 'utf8', stdio: 'pipe' }));
 });
+
+test('checked-in service example stays valid and does not enable collection or the API', () => {
+  const config = loadServiceConfig(path.resolve('agent-trace.service.example.json'));
+  assert.equal(config.collection.enabled, false);
+  assert.equal(config.api.enabled, false);
+  assert.equal(config.capture_mode, 'metadata');
+  assert.deepEqual(config.api.clients.map(client => client.views), [['metadata'], ['content']]);
+});

@@ -1,8 +1,8 @@
 # 架构说明
 
-状态：Codex 首版本地实现。更新日期：2026-11-14。
+状态：Codex 首版本地实现；常驻采集与主动拉取处于 P0 契约阶段。更新日期：2026-11-14。
 
-本文描述已实现的文件批次链路。下一阶段的[无 hook 常驻采集与消费方主动拉取](continuous-collection.md)已经确认、尚未实现；它要求同步状态留在各消费方，Trace 不负责向 Stats/Knowledge 推送。实施清单见 [TODO](../../TODO.md)。
+本文描述已实现的文件批次链路。下一阶段的[无 hook 常驻采集与消费方主动拉取](continuous-collection.md)方案已确认，P0 已实现[服务配置](service-config.md)校验、[本机只读 API](local-api.md)契约和[消费方 follow 约定](consumer-follow.md)，但 `serve`、HTTP 服务端和 follow worker 尚未实现。同步状态留在各消费方，Trace 不负责向 Stats/Knowledge 推送。实施清单见 [TODO](../../TODO.md)。
 
 ## 项目职责与数据方向
 
@@ -22,11 +22,11 @@ flowchart TD
     KS --> Q[CLI / 只读 MCP 检索与来源读取]
 ```
 
-图中的箭头目前由 CLI 导出和导入 JSON 文件完成。没有后台推送、定时任务或自动从 agent 运行时截获事件。Inspector 是独立查看工具，尚未与本模块集成。
+图中的箭头目前由 CLI 导出和导入 JSON 文件完成。没有后台推送、定时任务或自动从 agent 运行时截获事件。`config-check` 只校验常驻服务配置，不启动采集；HTTP 与 follow 仍未实现。Inspector 是独立查看工具，尚未与本模块集成。
 
 | 项目 | 拥有的数据与规则 | 对外入口 |
 | --- | --- | --- |
-| Agent Trace | 捕获策略、来源、事件身份、事件证据、统一序列、删除标记 | `ingest/export/read/delete-session/status` |
+| Agent Trace | 捕获策略、来源、事件身份、事件证据、统一序列、删除标记 | `ingest/export/read/delete-session/status/config-check` |
 | Agent Stats | 用量归因、费用估算、工具统计、独立消费进度 | `import-archive`、原有看板和查询 |
 | Agent Knowledge | 已授权的归档证据投影、检索、来源读取、独立消费进度 | `archive-import/archive-search/archive-read`、只读 MCP |
 
@@ -39,7 +39,9 @@ flowchart TD
 | 命令入口 | [src/cli.ts](../src/cli.ts) | 参数校验、命令编排、导入回执、私有批次文件输出 |
 | 数据类型与基础校验 | [src/types.ts](../src/types.ts) | 事件/批次类型、身份、时间、哈希和错误 |
 | Codex 适配器 | [src/codex.ts](../src/codex.ts) | JSONL 完整行解析、原生记录到统一事件的映射、元数据白名单 |
-| 来源与归档存储 | [src/store.ts](../src/store.ts) | 显式路径发现、来源大小检查、事务写入、去重、分页、读取与删除 |
+| 来源与归档存储 | [src/store.ts](../src/store.ts) | 显式路径发现、来源大小检查、事务写入、去重、分页、高水位、读取与删除 |
+| 服务配置 | [src/config.ts](../src/config.ts) | 严格配置校验、相对路径解析、项目/cwd 匹配、默认库兼容 |
+| 本机 API 契约 | [src/api.ts](../src/api.ts) | 查询与授权校验、错误映射、状态信封、页大小边界 |
 | 跨项目验收 | [scripts/verify-consumers.ts](../scripts/verify-consumers.ts) | 用合成数据调用真实的两侧 CLI |
 | 统计消费方 | [agent_stats/archive.py](../../agent-stats/agent_stats/archive.py) | 批次校验、事务游标、统计重建与删除传播 |
 | 证据消费方 | [src/archive/index.ts](../../agent-knowledge/src/archive/index.ts) | 事务导入、owner/project 范围、证据搜索和读取 |

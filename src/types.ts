@@ -20,6 +20,15 @@ export interface Event {
   body: JsonObject | null;
   raw: JsonObject | null;
 }
+export interface ArchiveStatus {
+  schema_version: 1;
+  archive_id: string;
+  capture_mode: View;
+  high_watermark: number;
+  events: number;
+  sessions: number;
+  deleted_sessions: number;
+}
 export interface Batch {
   schema_version: 1;
   archive_id: string;

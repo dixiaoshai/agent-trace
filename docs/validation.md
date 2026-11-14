@@ -46,3 +46,25 @@
 - 两个 skill 的 `quick_validate.py` 通过，20 份当前文档的本地链接通过。
 
 独立审查发现直接把 TypeScript 源文件作为 npm bin 会在依赖安装目录下被 Node 拒绝；已改为构建的 JavaScript bin，并通过上述打包布局验证和审查复核。兼容旧 MCP 轨迹的固定拒答校验亦经定向复核，额外字段、额外回答和工具调用仍会被拒绝。未读取用户真实历史或修改全局宿主配置。
+
+## P0 配置与接口契约（2026-11-14）
+
+实际执行：
+
+| 范围 | 命令 | 结果 |
+| --- | --- | --- |
+| Agent Trace | `npm run check` | 类型检查、20 项测试和 JavaScript 构建通过 |
+| 示例配置 | `node src/cli.ts config-check --config agent-trace.service.example.json` | 通过；数据库未创建，采集与 API 均为关闭 |
+| 文档链接 | 本地 Markdown 相对链接检查 | 新增/修改文档的本地链接通过 |
+
+新增测试覆盖：
+
+- 服务配置严格对象/字段/类型校验，未知键、非回环监听、重复客户端/来源、非法 token 摘要和视图均以 `INVALID_CONFIG` 拒绝。
+- 数据库、来源 `root` 和 `cwd_allowlist` 相对配置文件目录解析；省略数据库时新默认库优先、旧 `.agent-archive` 回退；显式 `--db` 覆盖。
+- `cwd` 路径段边界、嵌套最长匹配、缺失/相对路径拒绝和同深度歧义。
+- token 的 SHA-256 摘要、`Bearer` 认证、Host/Origin、客户端视图授权和重复 header 拒绝。
+- `/v1/events` 参数默认值、规范整数、重复/未知/空参数、1000 事件上限和 4096 字符上限。
+- 错误映射、`/v1/status` 信封（归档身份、高水位、采集健康）以及不泄露 token/正文。
+- `config-check` 不创建数据库、不回显 token 摘要，示例配置保持可加载且默认关闭采集与 API。
+
+明确未验证：没有实现或启动 `serve`、HTTP 监听、扫描调度、运行锁/心跳、真实网络请求或消费方 `follow` worker；没有读取真实 Codex 历史，没有启用采集或修改全局配置。P0 契约尚未经过未参与实现的 reviewer 独立审查。

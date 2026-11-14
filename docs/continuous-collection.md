@@ -1,6 +1,6 @@
 # 常驻采集与消费方主动拉取方案
 
-状态：方案已确认，功能尚未实现。本轮只维护文档，实施交接见工作区 [TODO](../../TODO.md)。更新日期：2026-11-14。
+状态：方案已确认；P0 已固定并实现服务配置校验、事件/状态接口契约与消费方 follow 约定。常驻采集、HTTP 服务端和两个 follow worker 尚未实现（P1/P2），实施交接见工作区 [TODO](../../TODO.md)。更新日期：2026-11-14。
 
 ## 已确认的方向
 
@@ -24,7 +24,7 @@
 | 同步进度 | 消费库已有事务游标 | 复用游标，补同步任务配置、状态和错误 |
 | 删除 | 导出并手动消费墓碑 | 各 worker 自动取到墓碑并清除投影 |
 
-以下出现的 HTTP 接口、配置项、`serve/follow` 等命令均为待实现约定，不是当前可执行能力。
+接口与配置的固定细节见[服务配置](service-config.md)、[本机 API](local-api.md)和[消费方 follow 约定](consumer-follow.md)。`serve`、HTTP 服务端与 `follow` 命令仍是待实现约定；当前只有 `config-check` 可执行。
 
 ## 目标架构与进程
 
@@ -49,7 +49,7 @@ Trace 只依赖来源配置和自身存储，不导入 Stats 的 Python 实现�
 
 ## Trace：常驻采集
 
-新增前台常驻命令，建议形式为 `agent-trace serve --config PATH`。先通过配置确定：
+新增前台常驻命令 `agent-trace serve --config PATH`（P1 实现）。先通过严格校验的[服务配置](service-config.md)确定：
 
 - 数据库、捕获模式、本机监听地址与端口。
 - 明确的日志根目录或文件范围、来源实例 ID。
@@ -68,14 +68,14 @@ Codex 日志目录按日期组织，不能把同一日期目录内的所有会�
 
 ## Trace：只读拉取协议
 
-建议以现有 `Archive.exportBatch` 作为 API 的唯一批次生成逻辑：
+以现有 `Archive.exportBatch` 作为 API 的唯一批次生成逻辑；完整请求、授权与错误格式见[本机 API](local-api.md)。
 
 | 拟定接口 | 行为 |
 | --- | --- |
 | `GET /v1/events?after=0&limit=500&view=metadata` | 返回现有 v1 Batch，事件按归档序列排序 |
 | `GET /v1/status` | 返回协议版本、`archive_id`、捕获模式、当前归档高水位及采集健康状态 |
 
-具体监听端口留给配置，不占用当前 Stats 的 8765。仅监听回环地址；需校验 Host/Origin、请求参数和响应大小，限制可读取视图。metadata 响应始终剔除正文与原始对象。不要把 token 或正文写入访问日志；实施时明确本机客户端凭据/能力与视图授权方案，不因绑定回环地址就假定 content 可以任意访问。
+端口、回环地址和客户端能力由[服务配置](service-config.md)明确声明，默认 `127.0.0.1:8766`，不占用 Stats 的 8765。只监听回环；请求必须携带 bearer token，Host/Origin、参数与 32 MiB 响应上限均在[本机 API](local-api.md)固定。metadata 响应始终剔除正文与原始对象。token 摘要才写入配置，日志不得记录 token、正文或原始对象；不因绑定回环就允许匿名 content 访问。
 
 HTTP 返回的批次保留 `schema_version/archive_id/view/after_cursor/next_cursor/has_more/events`，不新增必须由手动导入方理解的字段。`GET` 不推进任何消费状态；重取相同范围没有“确认收货”的副作用。超界游标、非法参数、未授权视图与不可读归档需返回明确错误，不能伪装成空页并让消费方跳过。
 
@@ -85,9 +85,9 @@ Trace 不提供消费确认 API，不保存“Stats 已到哪里”等业务状�
 
 ## 消费方：独立自动同步
 
-两个项目分别新增自己的 `follow` 类命令或 worker，建议前台独立运行；现有文件导入 CLI 继续保留。每个 worker 的配置包含 Trace URL、允许视图、目标数据库/Knowledge 配置、页大小、空闲轮询间隔、超时及重试边界。
+两个项目分别新增固定名称的 `follow` 命令（Stats `agent-stats follow`、Knowledge `agent-knowledge follow`），前台独立运行；现有文件导入 CLI 继续保留。配置键、状态输出和错误分类见[消费方 follow 约定](consumer-follow.md)。
 
-Stats 固定拉 metadata；Knowledge 固定拉 content。不要在原有消费状态中随意切视图。各同步任务只改自己的配置和数据库，不改 Trace 内部表或对方数据。
+Stats 固定拉 metadata；Knowledge 固定拉 content。视图不作为 worker 配置项，不能在原有消费状态中切换。各同步任务只改自己的配置和数据库，不改 Trace 内部表或对方数据。
 
 ```mermaid
 sequenceDiagram

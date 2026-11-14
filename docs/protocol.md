@@ -10,11 +10,13 @@ The archive owns captured source evidence and normalized events. Agent Stats own
 statistics; Agent Knowledge owns searchable evidence and subsequently derived memories.
 Consumers never write the archive's SQLite tables. The first transport is a JSON
 batch file exported by CLI, allowing Python and TypeScript consumers to share a
-versioned contract without sharing internal database schemas. The agreed next
-stage is a read-only local HTTP feed pulled independently by each consumer. It
-is not implemented yet. Trace will not maintain destination registries, delivery
-queues or consumer acknowledgment state. See [the design](continuous-collection.md)
-and [implementation TODO](../../TODO.md).
+versioned contract without sharing internal database schemas. The next transport
+is a read-only local HTTP feed pulled independently by each consumer. Its
+endpoint, authentication, view and error contract is fixed in [the local API
+document](local-api.md); the server and consumer workers are not implemented
+yet. Trace does not maintain destination registries, delivery queues or consumer
+acknowledgment state. See [the design](continuous-collection.md),
+[service configuration](service-config.md) and [implementation TODO](../../TODO.md).
 
 The archive requires explicit source paths, instance ID and project ID. It does
 not discover or import the user's history automatically. The database's capture

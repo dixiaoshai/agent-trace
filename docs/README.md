@@ -1,15 +1,17 @@
 # Agent Trace 文档索引
 
-更新日期：2026-11-14。以下文档描述当前 Codex 首版、P0 契约与 P1 Trace 常驻服务；消费方 follow worker 等未来能力单独标注。
+更新日期：2026-11-15。以下文档描述当前 Codex 首版、P0 契约、P1 Trace 常驻服务与两个已实现消费方，以及已进入 J1a 的 Agent Journal。
 
 | 文档 | 回答的问题 | 适合谁 |
 | --- | --- | --- |
 | [项目入口与快速开始](../README.md) | 它做什么？如何快速运行？ | 所有使用者 |
-| [架构说明](architecture.md) | 三个项目如何分工？代码、存储和接口在哪里？ | 开发与维护者 |
+| [架构说明](architecture.md) | 三个已实现项目与规划中的 Journal 如何分工？代码、存储和接口在哪里？ | 开发与维护者 |
 | [常驻采集与主动拉取设计](continuous-collection.md) | 下一阶段如何自动运行？为什么进度由消费方维护？ | 下一 session 实施者 |
 | [服务配置](service-config.md) | `serve` 的配置字段、路径规则、项目匹配和安全边界是什么？ | 部署者与 P1 实施者 |
 | [本机只读 API](local-api.md) | 事件页与状态接口如何授权、分页和报错？ | 消费方开发者与 P1 实施者 |
-| [消费方 follow 约定](consumer-follow.md) | Stats/Knowledge 如何独立拉取、报告状态和处理错误？ | P2 实施者 |
+| [消费方 follow 约定](consumer-follow.md) | Stats/Knowledge 如何独立拉取、报告状态和处理错误？Journal 如何复用同一契约？ | P2 实施者 |
+| [v1 数据协议](protocol.md) | 事件字段、身份、游标和一致性规则是什么？ | 适配器与消费方开发者 |
+| [协议一致性 fixtures](../fixtures/protocol/README.md) | 消费方如何用同一组有效/无效页验证自己的实现？ | 消费方开发者 |
 | [工作区 TODO / 交接任务](../../TODO.md) | 哪些尚未实现？按什么顺序完成和验收？ | 下一 session 实施者 |
 | [执行流程](workflow.md) | 导入、分页、消费、重试和删除如何流转？ | 使用者与开发者 |
 | [使用与排错](usage.md) | 从合成试跑到选定会话采集，具体执行哪些命令？ | 本地使用者 |
@@ -19,4 +21,4 @@
 
 首次使用建议先看快速开始和使用说明；修改接入或协议时先看架构、流程和 v1 协议。
 
-当前使用本地 SQLite、JSON 批次和本机分页 API，两个消费方独立续读。P1 已实现 Trace 前台 `serve`、常驻扫描、租约/心跳和只读 HTTP API；两个消费方 `follow` 自动拉取已实现（P2），仍有真实宿主/故障矩阵与独立审查待完成；没有自动经验提取。Codex、pi 与 DeepSeek Harness（`dsh`）均已适配；dsh 的拼接 Zstandard 会话在导入时解码为逻辑 JSONL。
+当前使用本地 SQLite、JSON 批次和本机分页 API，Stats 与 Knowledge 两个消费方独立续读并已实现 `follow` 自动拉取（P2）；Agent Journal 是第三个 content 消费方（J1a + J1b 模型已实现，launchd/Knowledge 索引待做）。P1 已实现 Trace 前台 `serve`、常驻扫描、租约/心跳和只读 HTTP API；仍有真实宿主/故障矩阵与独立审查待完成；没有自动经验提取。Codex、pi 与 DeepSeek Harness（`dsh`）均已适配；dsh 的拼接 Zstandard 会话在导入时解码为逻辑 JSONL。

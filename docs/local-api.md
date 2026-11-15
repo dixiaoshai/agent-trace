@@ -16,7 +16,7 @@ node src/cli.ts serve --config path/to/service.json
 
 - 只监听配置中的回环地址：`127.0.0.1`、`::1` 或 `localhost`，端口默认 `8766`。拒绝非回环 bind。
 - 不因绑定回环就允许匿名访问。每个请求都必须带 `Authorization: Bearer <token>`；token 摘要和允许视图在配置文件 `api.clients` 中声明。
-- Stats 客户端只授权 `metadata`，Knowledge 客户端只授权 `content`。`/v1/status` 对任何已认证客户端可读，且不包含正文或原始对象。
+- Stats 客户端只授权 `metadata`，Knowledge 客户端只授权 `content`；Agent Journal 同样只需要 `content`，并应使用独立客户端与 token，不能复用其他消费方的凭据。`/v1/status` 对任何已认证客户端可读，且不包含正文或原始对象。
 - `Host` 必须是回环 host 加配置端口（`127.0.0.1:8766`、`localhost:8766` 或 `[::1]:8766`）。缺失或非回环 `Host` 返回 `INVALID_HOST`，用于降低 DNS rebinding 风险。
 - `Origin` 允许缺省（curl、CLI、worker）；若出现，只能是同一端口的回环 `http://` 源。`Origin: null` 或其它站点返回 `INVALID_ORIGIN`，避免浏览器跨站读取归档。
 - 访问日志不得记录 token、请求正文、事件正文或原始对象。当前实现不写逐请求访问日志；启动/扫描/停止事件只含身份、路径、计数、错误代码与时间。Trace 不写消费进度，也不需要消费方确认。

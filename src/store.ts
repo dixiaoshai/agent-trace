@@ -254,8 +254,17 @@ export class Archive {
    */
   private removeUnreferencedBlobs(candidates: string[]): void {
     if (this.captureMode !== 'content' || !candidates.length) return;
-    const cited = this.db.prepare('SELECT 1 FROM events WHERE instr(payload, ?) > 0 LIMIT 1');
-    const orphans = [...new Set(candidates)].filter(candidate => !cited.get(candidate));
+    // Blob files are named `<event_id>-<sha256>.txt`, so a committed event can
+    // only cite a candidate under its own event ID. Looking that event up by
+    // primary key keeps cleanup O(1) per blob; a full `events` scan per blob made
+    // historical content backfills spend minutes here. Names that do not match
+    // the archive's own scheme are left untouched rather than guessed at.
+    const cited = this.db.prepare('SELECT 1 FROM events WHERE event_id=? AND instr(payload, ?) > 0 LIMIT 1');
+    const orphans: string[] = [];
+    for (const candidate of new Set(candidates)) {
+      const match = /^([0-9a-f]{64})-[0-9a-f]{64}\.txt$/.exec(path.basename(candidate));
+      if (match && !cited.get(match[1]!, candidate)) orphans.push(candidate);
+    }
     removeBlobs(orphans, this.content);
   }
 

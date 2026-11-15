@@ -1,0 +1,223 @@
+{
+  "schema_version": 1,
+  "protocol": "archive-v1",
+  "notes": [
+    "Fixtures describe the page contract; they are not production data.",
+    "archive identity mismatch (ARCHIVE_CHANGED) is state-dependent and is exercised by consumer tests that bind a state first, so it is not a standalone fixture.",
+    "PAGE_TOO_LARGE and VIEW_UNAVAILABLE are server/status-level errors, not page fixtures.",
+    "Each consumer maps these semantic outcomes to its own error codes; expected_code below follows the consumer-follow contract where one exists."
+  ],
+  "fixtures": [
+    {
+      "file": "valid/content-page-1.json",
+      "view": "content",
+      "valid": true,
+      "layer": "page",
+      "expect": {
+        "follow": "accept",
+        "import": "accept"
+      },
+      "covers": [
+        "session.started",
+        "message.user",
+        "tool.called",
+        "tool.returned",
+        "usage.snapshot",
+        "turn.completed"
+      ]
+    },
+    {
+      "file": "valid/content-deletion-page.json",
+      "view": "content",
+      "valid": true,
+      "layer": "page",
+      "expect": {
+        "follow": "accept",
+        "import": "accept"
+      },
+      "notes": "Must be applied after content-page-1 with cursor 6; the tombstone erases the session evidence."
+    },
+    {
+      "file": "valid/metadata-empty-page.json",
+      "view": "metadata",
+      "valid": true,
+      "layer": "page",
+      "expect": {
+        "follow": "accept (metadata consumer)",
+        "import": "not applicable (content-only importer)"
+      },
+      "notes": "Empty tail may advance nothing; metadata consumers only."
+    },
+    {
+      "file": "valid/content-ref-page.json",
+      "view": "content",
+      "valid": true,
+      "layer": "page",
+      "expect": {
+        "follow": "accept",
+        "import": "accept"
+      },
+      "notes": "Body carries a valid content_ref; consumers must not read the path during import/search."
+    },
+    {
+      "file": "invalid/unsupported-version.json",
+      "valid": false,
+      "layer": "page",
+      "reason": "batch schema_version is not 1",
+      "expected_code": {
+        "follow": "INVALID_PAGE",
+        "import": "INVALID_ARCHIVE"
+      }
+    },
+    {
+      "file": "invalid/unknown-envelope-field.json",
+      "valid": false,
+      "layer": "page",
+      "reason": "unknown batch field",
+      "expected_code": {
+        "follow": "INVALID_PAGE",
+        "import": "INVALID_ARCHIVE"
+      }
+    },
+    {
+      "file": "invalid/wrong-view.json",
+      "valid": false,
+      "layer": "page",
+      "reason": "view does not match the consumer binding",
+      "expected_code": {
+        "follow": "INVALID_PAGE",
+        "import": "INVALID_ARCHIVE"
+      }
+    },
+    {
+      "file": "invalid/cursor-gap.json",
+      "valid": false,
+      "layer": "page",
+      "reason": "after_cursor is ahead of the committed cursor",
+      "expected_code": {
+        "follow": "INVALID_PAGE",
+        "import": "INVALID_ARCHIVE"
+      }
+    },
+    {
+      "file": "invalid/non-advancing-cursor.json",
+      "valid": false,
+      "layer": "page",
+      "reason": "has_more=true without advancing next_cursor",
+      "expected_code": {
+        "follow": "INVALID_PAGE",
+        "import": "INVALID_ARCHIVE"
+      }
+    },
+    {
+      "file": "invalid/unordered-events.json",
+      "valid": false,
+      "layer": "page",
+      "reason": "events are not ordered by archive_seq",
+      "expected_code": {
+        "follow": "INVALID_PAGE",
+        "import": "INVALID_ARCHIVE"
+      }
+    },
+    {
+      "file": "invalid/event-beyond-cursor.json",
+      "valid": false,
+      "layer": "page",
+      "reason": "event sequence is beyond next_cursor",
+      "expected_code": {
+        "follow": "INVALID_PAGE",
+        "import": "INVALID_ARCHIVE"
+      }
+    },
+    {
+      "file": "invalid/bad-session-key.json",
+      "valid": false,
+      "layer": "event",
+      "reason": "session_key does not match [runtime, instance_id, session_id]",
+      "expected_code": {
+        "follow": "INVALID_PAGE",
+        "import": "INVALID_ARCHIVE"
+      }
+    },
+    {
+      "file": "invalid/bad-event-id.json",
+      "valid": false,
+      "layer": "event",
+      "reason": "codex event identity does not match sha256([runtime, instance_id, session_id, line])",
+      "expected_code": {
+        "follow": "INVALID_PAGE",
+        "import": "INVALID_ARCHIVE"
+      }
+    },
+    {
+      "file": "invalid/missing-source.json",
+      "valid": false,
+      "layer": "event",
+      "reason": "non-deletion event has no source reference",
+      "expected_code": {
+        "follow": "INVALID_PAGE",
+        "import": "INVALID_ARCHIVE"
+      }
+    },
+    {
+      "file": "invalid/deletion-marker-with-body.json",
+      "valid": false,
+      "layer": "event",
+      "reason": "deletion markers must have null source/body/raw and empty data",
+      "expected_code": {
+        "follow": "INVALID_PAGE",
+        "import": "INVALID_ARCHIVE"
+      }
+    },
+    {
+      "file": "invalid/duplicate-event-id.json",
+      "valid": false,
+      "layer": "event",
+      "reason": "two events in a page share an event identity",
+      "expected_code": {
+        "follow": "INVALID_PAGE",
+        "import": "INVALID_ARCHIVE"
+      }
+    },
+    {
+      "file": "invalid/unknown-metadata-field.json",
+      "valid": false,
+      "layer": "event",
+      "reason": "data contains a field outside the kind allowlist",
+      "expected_code": {
+        "follow": "INVALID_PAGE",
+        "import": "INVALID_ARCHIVE"
+      }
+    },
+    {
+      "file": "invalid/negative-usage.json",
+      "valid": false,
+      "layer": "event",
+      "reason": "usage token counts must be nonnegative integers",
+      "expected_code": {
+        "follow": "INVALID_PAGE",
+        "import": "INVALID_ARCHIVE"
+      }
+    },
+    {
+      "file": "invalid/content-ref-relative-path.json",
+      "valid": false,
+      "layer": "event",
+      "reason": "content_ref.path must be absolute",
+      "expected_code": {
+        "follow": "INVALID_PAGE",
+        "import": "INVALID_ARCHIVE"
+      }
+    },
+    {
+      "file": "invalid/content-ref-wrong-media-type.json",
+      "valid": false,
+      "layer": "event",
+      "reason": "content_ref.media_type must be text/plain",
+      "expected_code": {
+        "follow": "INVALID_PAGE",
+        "import": "INVALID_ARCHIVE"
+      }
+    }
+  ]
+}

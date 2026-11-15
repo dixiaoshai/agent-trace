@@ -1,0 +1,194 @@
+{
+  "schema_version": 1,
+  "archive_id": "00000000-0000-4000-8000-000000000001",
+  "view": "content",
+  "after_cursor": 0,
+  "next_cursor": 6,
+  "has_more": false,
+  "events": [
+    {
+      "schema_version": 1,
+      "event_id": "ed456596e19d3bb5848d7cebec7e6078a69fdc01e55c4730e73bd2d94f196c7b",
+      "archive_seq": 1,
+      "runtime": "codex",
+      "instance_id": "fixture-device",
+      "session_id": "11111111-2222-4333-8444-555555555555",
+      "session_key": "[\"codex\",\"fixture-device\",\"11111111-2222-4333-8444-555555555555\"]",
+      "project_id": "fixture",
+      "kind": "session.started",
+      "occurred_at": "2026-01-01T00:00:00.000Z",
+      "observed_at": "2026-01-01T00:00:01.000Z",
+      "native_type": "fixture.line",
+      "source": {
+        "path": "/selected/rollout-fixture.jsonl",
+        "line": 1,
+        "record_hash": "c4c3492d69824aaa4c8251401f043e158f212d95030b15bda8545c8cf17e16c2"
+      },
+      "data": {
+        "turn_id": "turn-1",
+        "root_turn_id": null,
+        "model": "fixture-model",
+        "cwd": "/workspace/fixture",
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "cli_version": "fixture-1.0.0",
+        "title": "Fixture session"
+      },
+      "body": null,
+      "raw": null
+    },
+    {
+      "schema_version": 1,
+      "event_id": "07981e43ffbca23d4186c3f1797bd2909cb1475ca62fdaea2441558ced40838d",
+      "archive_seq": 2,
+      "runtime": "codex",
+      "instance_id": "fixture-device",
+      "session_id": "11111111-2222-4333-8444-555555555555",
+      "session_key": "[\"codex\",\"fixture-device\",\"11111111-2222-4333-8444-555555555555\"]",
+      "project_id": "fixture",
+      "kind": "message.user",
+      "occurred_at": "2026-01-01T00:00:01.000Z",
+      "observed_at": "2026-01-01T00:00:01.000Z",
+      "native_type": "fixture.line",
+      "source": null,
+      "data": {
+        "turn_id": "turn-1",
+        "root_turn_id": null,
+        "model": "fixture-model",
+        "title": "Say hello"
+      },
+      "body": {
+        "text": "Hello, run the fixture."
+      },
+      "raw": null
+    },
+    {
+      "schema_version": 1,
+      "event_id": "0471241744a633c36665b3d008be8fcfd6ffd2dc0686308ff5f22b0e35947703",
+      "archive_seq": 3,
+      "runtime": "codex",
+      "instance_id": "fixture-device",
+      "session_id": "11111111-2222-4333-8444-555555555555",
+      "session_key": "[\"codex\",\"fixture-device\",\"11111111-2222-4333-8444-555555555555\"]",
+      "project_id": "fixture",
+      "kind": "tool.called",
+      "occurred_at": "2026-01-01T00:00:02.000Z",
+      "observed_at": "2026-01-01T00:00:01.000Z",
+      "native_type": "fixture.line",
+      "source": {
+        "path": "/selected/rollout-fixture.jsonl",
+        "line": 3,
+        "record_hash": "6dd6b301750c10c18aa6ea19c4c00af79f1e90ed48696f434e704e901cfdc539"
+      },
+      "data": {
+        "turn_id": "turn-1",
+        "root_turn_id": null,
+        "model": "fixture-model",
+        "call_id": "call-1",
+        "name": "exec",
+        "input_bytes": 15
+      },
+      "body": {
+        "arguments": {
+          "cmd": "echo hello"
+        }
+      },
+      "raw": null
+    },
+    {
+      "schema_version": 1,
+      "event_id": "3ecc867263ac20c3d587a0c178af84806680573721c414790c269bf732c6944a",
+      "archive_seq": 4,
+      "runtime": "codex",
+      "instance_id": "fixture-device",
+      "session_id": "11111111-2222-4333-8444-555555555555",
+      "session_key": "[\"codex\",\"fixture-device\",\"11111111-2222-4333-8444-555555555555\"]",
+      "project_id": "fixture",
+      "kind": "tool.returned",
+      "occurred_at": "2026-01-01T00:00:03.000Z",
+      "observed_at": "2026-01-01T00:00:01.000Z",
+      "native_type": "fixture.line",
+      "source": {
+        "path": "/selected/rollout-fixture.jsonl",
+        "line": 4,
+        "record_hash": "a68f3df47a729048157890ba58f758884a822d6618627b23edfa3ffa2bad7d40"
+      },
+      "data": {
+        "turn_id": "turn-1",
+        "root_turn_id": null,
+        "model": "fixture-model",
+        "call_id": "call-1",
+        "output_bytes": 6,
+        "status": "result_observed"
+      },
+      "body": {
+        "output": "hello\n"
+      },
+      "raw": null
+    },
+    {
+      "schema_version": 1,
+      "event_id": "96c50d965e27086c0d6380c9294d1c17b2da8613b9925bb5c5629942e660bbf1",
+      "archive_seq": 5,
+      "runtime": "codex",
+      "instance_id": "fixture-device",
+      "session_id": "11111111-2222-4333-8444-555555555555",
+      "session_key": "[\"codex\",\"fixture-device\",\"11111111-2222-4333-8444-555555555555\"]",
+      "project_id": "fixture",
+      "kind": "usage.snapshot",
+      "occurred_at": "2026-01-01T00:00:04.000Z",
+      "observed_at": "2026-01-01T00:00:01.000Z",
+      "native_type": "fixture.line",
+      "source": {
+        "path": "/selected/rollout-fixture.jsonl",
+        "line": 5,
+        "record_hash": "44757857c6ed1255b61243397db97e8e665888d867bc2fb06f849d32a8916f72"
+      },
+      "data": {
+        "turn_id": "turn-1",
+        "root_turn_id": null,
+        "model": "fixture-model",
+        "rate_limit_only": false,
+        "cumulative": {
+          "input_tokens": 1200,
+          "output_tokens": 120
+        },
+        "last_usage": {
+          "input_tokens": 1200,
+          "output_tokens": 120
+        },
+        "cost_usd": 0.0012,
+        "cost_source": "model_rates"
+      },
+      "body": null,
+      "raw": null
+    },
+    {
+      "schema_version": 1,
+      "event_id": "87d599ec37bc06925f4f74391bb21f1cdff12b797be8447f510eed32472980a6",
+      "archive_seq": 6,
+      "runtime": "codex",
+      "instance_id": "fixture-device",
+      "session_id": "11111111-2222-4333-8444-555555555555",
+      "session_key": "[\"codex\",\"fixture-device\",\"11111111-2222-4333-8444-555555555555\"]",
+      "project_id": "fixture",
+      "kind": "turn.completed",
+      "occurred_at": "2026-01-01T00:00:05.000Z",
+      "observed_at": "2026-01-01T00:00:01.000Z",
+      "native_type": "fixture.line",
+      "source": {
+        "path": "/selected/rollout-fixture.jsonl",
+        "line": 6,
+        "record_hash": "6c8b68288280a43bebe179cdf210f66811e72e8533ff4b6c2a1c56f0d75ef47c"
+      },
+      "data": {
+        "turn_id": "turn-1",
+        "root_turn_id": null,
+        "model": "fixture-model"
+      },
+      "body": {
+        "text": "fixture completed"
+      },
+      "raw": null
+    }
+  ]
+}

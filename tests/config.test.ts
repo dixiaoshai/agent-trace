@@ -127,6 +127,9 @@ test('service config rejects unsafe or ambiguous values with INVALID_CONFIG', t 
     ['source empty root', c => { c.collection.sources[0].root = ''; return c; }],
     ['source home-relative root', c => { c.collection.sources[0].root = '~/codex'; return c; }],
     ['source without projects', c => { c.collection.sources[0].projects = []; return c; }],
+    ['fallback duplicates project id', c => { c.collection.sources[0].unmatched_project_id = 'demo'; return c; }],
+    ['non-string fallback project id', c => { c.collection.sources[0].unmatched_project_id = 1; return c; }],
+    ['empty fallback project id', c => { c.collection.sources[0].unmatched_project_id = ''; return c; }],
     ['duplicate project in source', c => { c.collection.sources[0].projects.push(structuredClone(c.collection.sources[0].projects[0])); return c; }],
     ['duplicate root', c => { c.collection.sources.push(structuredClone(c.collection.sources[0])); return c; }],
     ['empty cwd allowlist', c => { c.collection.sources[0].projects[0].cwd_allowlist = []; return c; }],
@@ -190,6 +193,51 @@ test('project matching honors path boundaries, nesting and ambiguity', () => {
       { project_id: 'b', cwd_allowlist: ['/tmp/shared'] },
     ],
   };
+  assert.equal((projectForCwd(ambiguous, '/tmp/shared/x') as { error: string }).error, 'PROJECT_AMBIGUOUS');
+});
+
+test('unmatched_project_id collects everything while declared projects keep precise attribution', t => {
+  const dir = directory(t);
+  const value = validConfig();
+  const source = (value.collection as { sources: Array<Record<string, unknown>> }).sources[0]!;
+  source.unmatched_project_id = 'unscoped';
+  const config = loadServiceConfig(writeConfig(dir, value));
+  assert.equal(config.collection.sources[0]!.unmatched_project_id, 'unscoped');
+  assert.equal(
+    (describeServiceConfig(config).collection as { sources: Array<{ unmatched_project_id: string | null }> })
+      .sources[0]!.unmatched_project_id,
+    'unscoped',
+  );
+
+  // A source with no declared projects is valid only together with the fallback.
+  source.projects = [];
+  const collectAll = loadServiceConfig(writeConfig(dir, value, 'collect-all.json'));
+  assert.deepEqual(collectAll.collection.sources[0]!.projects, []);
+  assert.equal(collectAll.collection.sources[0]!.unmatched_project_id, 'unscoped');
+
+  const fallbackSource: SourceConfig = {
+    instance_id: 'device',
+    root: '/logs',
+    runtime: 'auto',
+    unmatched_project_id: 'unscoped',
+    projects: [
+      { project_id: 'work', cwd_allowlist: ['/tmp/work'] },
+      { project_id: 'nested', cwd_allowlist: ['/tmp/work/nested'] },
+    ],
+  };
+  // Declared scopes still win: the fallback only covers what cannot be attributed.
+  assert.deepEqual(projectForCwd(fallbackSource, '/tmp/work/demo'), { project_id: 'work' });
+  assert.deepEqual(projectForCwd(fallbackSource, '/tmp/work/nested/pkg'), { project_id: 'nested' });
+  assert.deepEqual(projectForCwd(fallbackSource, '/tmp/elsewhere'), { project_id: 'unscoped' });
+  assert.deepEqual(projectForCwd(fallbackSource, '/tmp/workshop'), { project_id: 'unscoped' });
+  assert.deepEqual(projectForCwd(fallbackSource, 'tmp/work'), { project_id: 'unscoped' });
+  assert.deepEqual(projectForCwd(fallbackSource, ''), { project_id: 'unscoped' });
+  assert.deepEqual(projectForCwd(fallbackSource, undefined), { project_id: 'unscoped' });
+  // Ambiguity is a configuration error, not an unknown project, so it stays an error.
+  const ambiguous: SourceConfig = { ...fallbackSource, projects: [
+    { project_id: 'a', cwd_allowlist: ['/tmp/shared'] },
+    { project_id: 'b', cwd_allowlist: ['/tmp/shared'] },
+  ] };
   assert.equal((projectForCwd(ambiguous, '/tmp/shared/x') as { error: string }).error, 'PROJECT_AMBIGUOUS');
 });
 

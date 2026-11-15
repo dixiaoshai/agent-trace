@@ -2,13 +2,13 @@
 
 项目原名 `agent-archive`，现更名为 `agent-trace`。新数据默认写入 `.agent-trace/trace.sqlite`；仅当新默认库不存在、旧库已存在时，才回退到 `.agent-archive/archive.sqlite`。显式 `--db` 优先。隐藏目录只用于运行数据。
 
-为 Agent Stats 和 Agent Knowledge 提供同一份可追溯的执行事件。已接入 Codex、pi 与 DeepSeek Harness（`dsh`）；Trace 只读取这些宿主已经写入的会话日志，不安装 hook。
+为 Agent Stats、Agent Knowledge 以及 Agent Journal（J1a）提供同一份可追溯的执行事件。已接入 Codex、pi 与 DeepSeek Harness（`dsh`）；Trace 只读取这些宿主已经写入的会话日志，不安装 hook。
 
 项目命名与迁移规则见[统一命名说明](../NAMING.md)。
 
-当前闭环：**明确选择 Codex JSONL 或 dsh 压缩会话 → 本地归档 → metadata/content 批次导出或本机分页 API → 两个消费方独立续读**。默认不扫描用户历史，不调用模型、不联网、不重新执行日志中的工具。dsh 当前日志是拼接的 Zstandard 帧（`session.vN.jsonl.zstd`），Trace 在导入时解码为逻辑 JSONL；源行号与 `record_hash` 指向解码后的追加顺序。
+当前闭环：**明确选择 Codex JSONL 或 dsh 压缩会话 → 本地归档 → metadata/content 批次导出或本机分页 API → 消费方独立续读**。默认不扫描用户历史，不调用模型、不联网、不重新执行日志中的工具。dsh 当前日志是拼接的 Zstandard 帧（`session.vN.jsonl.zstd`），Trace 在导入时解码为逻辑 JSONL；源行号与 `record_hash` 指向解码后的追加顺序。
 
-下一阶段采用 **无 hook 常驻采集 + 消费方主动拉取**：Trace 的前台 `serve` 已实现常驻扫描、单归档采集租约和只读事件 API；Stats 与 Knowledge 的自动 `follow` worker 仍属 P2。Trace 不维护下游清单、投递状态或执行下游命令。P0 配置/接口契约与 P1 Trace 服务见[服务配置](docs/service-config.md)、[本机 API](docs/local-api.md)、[消费方 follow 约定](docs/consumer-follow.md)、[设计](docs/continuous-collection.md)与[实施 TODO](../TODO.md)。
+下一阶段采用 **无 hook 常驻采集 + 消费方主动拉取**：Trace 的前台 `serve` 已实现常驻扫描、单归档采集租约和只读事件 API；Stats 与 Knowledge 的自动 `follow` worker 已实现（P2）；Agent Journal 的 J1a + J1b 模型与 J1c 1.1/1.2 已实现（58 项测试；独立 content 客户端与 launchd 06:30 已安装并 kickstart 验证），Knowledge 索引尚未实现。Trace 不维护下游清单、投递状态或执行下游命令。P0 配置/接口契约与 P1 Trace 服务见[服务配置](docs/service-config.md)、[本机 API](docs/local-api.md)、[消费方 follow 约定](docs/consumer-follow.md)、[设计](docs/continuous-collection.md)与[实施 TODO](../TODO.md)。
 
 ## 文档
 
@@ -46,7 +46,7 @@ npm run cli -- serve --config path/to/service.json --db path/to/pilot.sqlite
 
 配置要求见[服务配置](docs/service-config.md)，API 授权与错误见[本机 API](docs/local-api.md)。示例默认关闭采集与 API；启用真实来源、正文和网络前必须显式替换路径、`capture_mode` 与 token 摘要。采集与 API 都关闭时 `serve` 拒绝启动。
 
-采集按配置的来源扫描 `.jsonl`：首次 `backfill=none` 只记录基线，之后新文件或变化文件整文件重读并按事件身份去重；`backfill=all` 首次即导入当前文件。归档前按 `session_meta.cwd` 匹配项目，未知或歧义项目跳过并在状态中计数。单归档只允许一个采集租约；崩溃后租约过期可接管，重启会从已提交归档和扫描状态继续。
+采集按配置的来源扫描 `.jsonl`：首次 `backfill=none` 只记录基线，之后新文件或变化文件整文件重读并按事件身份去重；`backfill=all` 首次即导入当前文件。归档前按 `session_meta.cwd` 匹配项目，未知或歧义项目跳过并在状态中计数；给来源设置 `unmatched_project_id` 可把未命中会话归入兜底项目，实现“全量采集”。单归档只允许一个采集租约；崩溃后租约过期可接管，重启会从已提交归档和扫描状态继续。
 
 一份配置对应一个归档数据库和一种 `capture_mode`。不要用同一份配置启动两个采集进程；API-only 可设置 `collection.enabled=false`。需要同时保留 metadata 与 content 时，使用两份配置、两个数据库启动两个 `serve`（例如 `service.json`/`18766` 与 `content.json`/`18767`）。它们不是重复进程：前者供 Stats 统计，后者只采集选定正文并供 Knowledge 同步和按需正文查看。不同数据库的采集进程可以同时运行；同一数据库仍只允许一个采集租约。
 
@@ -66,7 +66,7 @@ node --experimental-strip-types scripts/install-content-service.ts --uninstall #
 
 本模块不根据目录名猜测身份；`--instance` 标识来源设备/运行环境，`--project` 是统一项目标识。同一会话的项目绑定固定。当前会重新读取所选文件，通过事件身份去重，不是基于字节偏移的 tail 守护进程。Codex/pi 源文件必须是完整 LF/CRLF 分行的 JSONL，未结束的尾行等待下次导入；dsh 源文件是拼接 Zstandard 帧，完整的帧先归档，未写完的最后一帧标记为 pending。完整坏行或原位置内容变化使该文件整次导入失败。
 
-## 两个消费方
+## 消费方
 
 在 `agent-stats` 目录执行：
 
@@ -87,6 +87,8 @@ npm run cli -- archive-search --query 幂等键 --project demo --config agent-kn
 
 按结果的 `archive_id` 与 `event.event_id` 用 `archive-read --archive ID --event ID` 核对原始证据。MCP 新增只读 `search_archive`、`read_archive_event`。归档证据投影保存在 `<knowledge database>.archive-evidence.sqlite`，与活跃知识记录分开，查询不依赖原日志仍在磁盘。执行中的 agent 声明、工具结果不是已确认经验；模型提取、验证及晋升后续实现。
 
+Agent Journal 是第三个 content 消费方：按本地日拉取增量、生成日报 Markdown，并交给 Agent Knowledge 作为 source 索引；它需要独立的 content 客户端与自己的游标/租约，不读取上述两个项目的数据库。J1a + J1b 模型与 J1c 1.1/1.2 已实现（58 项测试 + 真实单日验证；独立 content 客户端与 launchd 06:30 已安装、kickstart 验证）；Knowledge 索引尚未完成。见[项目文档](../agent-journal/README.md)与[P0 数据验证](../journal-spike/REPORT.md)。
+
 ## 内容与删除
 
 新数据库默认 `metadata` 捕获，仅保存结构字段、最多 80 字符的请求标题与来源定位。这些字段仍可能敏感。需要正文证据时，针对明确选定的来源，在新建数据库时显式使用 `--capture content`。捕获模式建立后不可静默切换。
@@ -97,7 +99,7 @@ content 会保存用户请求、回答、工具参数和输出、可见推理摘
 npm run cli -- delete-session --runtime codex --instance demo-device --session archive-demo-session --db .agent-trace/demo.sqlite
 ```
 
-删除会在同一事务内清除该会话的捕获事件，并追加删除标记。两个消费方必须继续消费到该标记才能清除自己的投影；旧页重试不会复活数据。已经导出的 JSON、备份和额外文件副本需单独清理。采集器拒绝静默重新导入已删除会话。详见 [协议与可靠性约定](docs/protocol.md)。
+删除会在同一事务内清除该会话的捕获事件，并追加删除标记。消费方必须继续消费到该标记才能清除自己的投影；旧页重试不会复活数据。已经导出的 JSON、备份和额外文件副本需单独清理。采集器拒绝静默重新导入已删除会话。详见 [协议与可靠性约定](docs/protocol.md)。
 
 ## 验证
 
@@ -118,7 +120,7 @@ npm run verify:follow
 
 脚本使用临时 content 归档、回环端口和合成 fixture，验证追加日志自动到达两侧、分别停止/重启消费方、独立游标与不重复计数，结束后清理临时数据。它不读取用户日志、不接触正式数据库。
 
-当前包含前台常驻采集服务与只读 HTTP API，两个消费方的自动拉取 worker 已实现；仍不含多用户认证、自动经验提取或 Inspector UI 集成。数据协议与消费方独立游标已固定，后续适配器在同一入口接入。
+当前包含前台常驻采集服务与只读 HTTP API，Stats 与 Knowledge 两个消费方的自动拉取 worker 已实现；仍不含多用户认证、自动经验提取或 Inspector UI 集成。数据协议与消费方独立游标已固定，后续适配器在同一入口接入。Agent Journal 已完成 J1a + J1b 模型与 J1c 1.1/1.2（58 项测试、独立 token、launchd 06:30 已安装），Knowledge 索引未实现，不在以上验证范围。
 
 导出流尚无按项目授权过滤。Agent Knowledge 的项目配置须允许导出页内所有项目，否则整批拒绝。授权范围较窄时使用单独归档库；不要手工删掉页内事件并保留全局游标。
 

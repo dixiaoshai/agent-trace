@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "archive_id": "00000000-0000-4000-8000-000000000001",
+  "view": "content",
+  "after_cursor": 6,
+  "next_cursor": 7,
+  "has_more": false,
+  "events": [
+    {
+      "schema_version": 1,
+      "event_id": "7cac61a4e59f17e4e9095e4ede34870f8921d71d4f30aa385452e2f864b5f9b8",
+      "archive_seq": 7,
+      "runtime": "codex",
+      "instance_id": "fixture-device",
+      "session_id": "11111111-2222-4333-8444-555555555555",
+      "session_key": "[\"codex\",\"fixture-device\",\"11111111-2222-4333-8444-555555555555\"]",
+      "project_id": "fixture",
+      "kind": "session.deleted",
+      "occurred_at": "2026-01-01T00:00:06.000Z",
+      "observed_at": "2026-01-01T00:00:07.000Z",
+      "native_type": "fixture.line",
+      "source": null,
+      "data": {},
+      "body": {
+        "text": "must be null"
+      },
+      "raw": null
+    }
+  ]
+}

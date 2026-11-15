@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "archive_id": "00000000-0000-4000-8000-000000000001",
+  "view": "content",
+  "after_cursor": 0,
+  "next_cursor": 1,
+  "has_more": false,
+  "events": [
+    {
+      "schema_version": 1,
+      "event_id": "09bbc7ac7c7c082b9bf0c2d16bf88112d177a08eccadc55df5941ced4692ed01",
+      "archive_seq": 1,
+      "runtime": "codex",
+      "instance_id": "fixture-device",
+      "session_id": "22222222-3333-4444-8555-666666666666",
+      "session_key": "[\"codex\",\"fixture-device\",\"22222222-3333-4444-8555-666666666666\"]",
+      "project_id": "fixture",
+      "kind": "tool.returned",
+      "occurred_at": "2026-01-01T01:00:00.000Z",
+      "observed_at": "2026-01-01T01:00:01.000Z",
+      "native_type": "fixture.line",
+      "source": {
+        "path": "/selected/rollout-fixture.jsonl",
+        "line": 1,
+        "record_hash": "c4c3492d69824aaa4c8251401f043e158f212d95030b15bda8545c8cf17e16c2"
+      },
+      "data": {
+        "turn_id": "turn-1",
+        "root_turn_id": null,
+        "model": "fixture-model",
+        "call_id": "call-2",
+        "output_bytes": 1234,
+        "status": "result_observed"
+      },
+      "body": {
+        "output": {
+          "content_ref": {
+            "path": "blobs/fixture.txt",
+            "bytes": 1234,
+            "sha256": "465119925e0bcbf3493f066c5688ae60832a147ea20477e4e3629d75e3957782",
+            "media_type": "text/plain"
+          }
+        }
+      },
+      "raw": null
+    }
+  ]
+}

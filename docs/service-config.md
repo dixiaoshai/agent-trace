@@ -44,7 +44,8 @@ node src/cli.ts serve --config PATH [--db OVERRIDE.sqlite]
         "root": "/absolute/path/to/selected/agent/sessions",
         "projects": [
           { "project_id": "project-a", "cwd_allowlist": ["/absolute/path/to/project-a"] }
-        ]
+        ],
+        "unmatched_project_id": "unscoped"
       }
     ]
   },
@@ -59,6 +60,10 @@ node src/cli.ts serve --config PATH [--db OVERRIDE.sqlite]
   }
 }
 ```
+
+接入 Agent Journal 时，需要新增第三个 content 客户端（例如
+`{ "id": "agent-journal", "views": ["content"], "token_sha256": "<64-hex>" }`）并单独签发 token；
+该客户端当前未启用，不要复用 Stats/Knowledge 的 token。Journal 使用独立游标与日缓冲，Trace 侧不保存其消费进度。
 
 ### 顶层字段
 
@@ -96,7 +101,8 @@ node src/cli.ts serve --config PATH [--db OVERRIDE.sqlite]
 | `instance_id` | 是 | 稳定来源实例 ID，写入事件身份；同一安装使用同一值 |
 | `runtime` | 否 | `auto`（默认）、`codex`、`pi` 或 `dsh`。`auto` 按首条记录识别；`deepseek-harness` 是 `dsh` 的配置别名并按 `dsh` 保存。显式值与实际格式不一致时该文件报 `RUNTIME_MISMATCH` |
 | `root` | 是 | 文件或目录，递归接收 `.jsonl`；相对路径相对配置文件；不跟随符号链接；单文件上限 128 MiB，来源文件数上限 10000 |
-| `projects` | 是 | 至少一个项目范围；同一来源内 `project_id` 不得重复 |
+| `projects` | 是 | 至少一个项目范围；同一来源内 `project_id` 不得重复。仅当设置 `unmatched_project_id` 时可为空数组 |
+| `unmatched_project_id` | 否 | 兜底项目 ID。设置后，cwd 未命中任何 `cwd_allowlist`（或缺失/非绝对/非法路径）的会话归入该 ID，该来源进入“全量采集”；必须与同一来源已声明的 `project_id` 不同 |
 
 项目范围对象：
 
@@ -142,19 +148,37 @@ unset TOKEN
 - 省略 `database` 时沿用既有默认规则：配置目录下 `.agent-trace/trace.sqlite` 优先；仅当它不存在且旧 `.agent-archive/archive.sqlite` 存在时使用旧库。显式 `database` 或 `--db` 始终优先。
 - 显式路径不存在时会新建空归档；不会自动回退到旧库，也不会移动、复制或删除存量数据。切换数据库前必须规划消费方游标与重建，不能把同一会话静默交给另一个归档。
 - `capture_mode` 只在建库时生效。对已有库请求不同模式会在打开时报 `CAPTURE_MODE`；不要另建库来“切换”同一会话的捕获模式。
-- content 归档必须使用新的独立数据库与独立 blob 目录，并作为独立 `archive_id` 配置消费方游标。正式 metadata 库、两个消费方现有游标不因正文试点改变。
+- content 归档必须使用新的独立数据库与独立 blob 目录，并作为独立 `archive_id` 配置消费方游标。正式 metadata 库、现有消费方游标不因正文试点改变。
 - `content.blob_directory` 默认跟随数据库目录；若它落在代码仓库或同步盘内，请显式改到私密目录。删除 content 数据库时不会自动删除 blob 目录或导出副本。
 
 ## 项目匹配规则
 
 采集器在归档一个会话之前，用会话声明的 `cwd` 与同一来源的 `projects[].cwd_allowlist` 做词法路径包含匹配。Codex 取最后一条 `session_meta.payload.cwd`，pi 取 session header 的 `cwd`：
 
-- `cwd` 必须是非空绝对路径；缺失、相对路径或越界路径不导入，计为 `PROJECT_UNMATCHED`。
+- `cwd` 必须是非空绝对路径。未设置 `unmatched_project_id` 时，缺失、相对路径或越界路径不导入，计为 `PROJECT_UNMATCHED`；设置后这些会话归入兜底项目。
 - 按路径段比较，`/work/app` 不会匹配 `/work/application`；`..` 会先规范化。
-- 多层 allowlist 同时匹配时取最长（最具体）的目录。不同项目在相同深度并列匹配时视为歧义，计为 `PROJECT_AMBIGUOUS`，该会话跳过直到配置修正。
+- 多层 allowlist 同时匹配时取最长（最具体）的目录。不同项目在相同深度并列匹配时视为歧义，计为 `PROJECT_AMBIGUOUS`，该会话跳过直到配置修正；兜底项目不会吞掉歧义（歧义是配置错误，不是未知项目）。
 - 不解析符号链接；配置应使用代理在会话元数据中记录的同一路径形式。
-- 不要用 `/`、整个 home 或过宽目录作为 allowlist；这会把该来源下所有会话归入同一项目。
-- 未知项目只跳过并可观察，不自动归入默认项目。日期目录可能混有多个项目，不能按目录名猜测归属。
+- 未设置兜底时不要用 `/`、整个 home 或过宽目录作为 allowlist；需要“全部采集”请显式配置 `unmatched_project_id`。
+- 未知项目在未设置兜底时只跳过并可观察，不自动归入默认项目。日期目录可能混有多个项目，不能按目录名猜测归属。
+
+### 全量采集示例
+
+要采集某个来源下的全部会话、同时保留已知项目的精确归属，只需给该来源增加 `unmatched_project_id`（`projects` 可继续保留，也可为空数组）：
+
+```json
+{
+  "instance_id": "local",
+  "runtime": "dsh",
+  "root": "/absolute/path/to/.dsh/sessions",
+  "unmatched_project_id": "unscoped",
+  "projects": [
+    { "project_id": "agent-trace", "cwd_allowlist": ["/absolute/path/to/agent-trace"] }
+  ]
+}
+```
+
+这样命中 `agent-trace` 的会话仍记为该 ID，其余全部归入 `unscoped`。从已有归档升级时，启用兜底会改变该来源的扫描范围指纹，之前计为 `unmatched` 的文件会在下一轮扫描自动补采；是否回补更早的基线文件仍由 `backfill` 决定（`all` 会导入首次扫描时只登记基线的文件）。
 
 `projectForCwd` 已实现上述规则并有回归测试；P1 扫描器直接复用。被跳过的文件不写归档，未匹配/歧义文件在扫描状态中计数；扫描状态只作为优化，已归档文件的检查点在该文件归档事务提交后才写入。
 

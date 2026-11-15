@@ -9,14 +9,19 @@ are decoded to logical JSONL before parsing.
 ## Ownership and transport
 
 The archive owns captured source evidence and normalized events. Agent Stats owns
-statistics; Agent Knowledge owns searchable evidence and subsequently derived memories.
-Consumers never write the archive's SQLite tables. The first transport is a JSON
+statistics; Agent Knowledge owns searchable evidence and subsequently derived memories;
+the planned Agent Journal owns daily review artifacts. Consumers never write the
+archive's SQLite tables and each implements its own consumer; they share this contract,
+not code. Protocol conformance fixtures (draft) live in
+[fixtures/protocol/](../fixtures/protocol/README.md); consumers should run the same
+corpus in their own tests. The first transport is a JSON
 batch file exported by CLI, allowing Python and TypeScript consumers to share a
 versioned contract without sharing internal database schemas. The next transport
 is a read-only local HTTP feed pulled independently by each consumer. Its
 endpoint, authentication, view and error contract is fixed in [the local API
-document](local-api.md); the server is implemented by `agent-trace serve` in
-P1, while the consumer workers are not implemented yet. Trace does not maintain
+document](local-api.md); the server is implemented by `agent-trace serve`.
+Stats and Knowledge workers are implemented; the planned Agent Journal worker is not.
+Trace does not maintain
 destination registries, delivery queues or consumer acknowledgment state. See
 [the design](continuous-collection.md), [service configuration](service-config.md)
 and [implementation TODO](../../TODO.md).
@@ -264,9 +269,13 @@ the same v1 input convention as pi:
 
 Dsh does not record a request cost in the session log, so `cost_usd` and
 `cost_source` are absent rather than zero. Event identity is
-`SHA256(JSON.stringify([runtime, instance_id, session_id, seq-or-line, kind]))`;
-several normalized events from one source row share the row and are
-distinguished by kind. `session/title` supplies the display title, with the
+`SHA256(JSON.stringify([runtime, instance_id, session_id, sequence, kind, identity]))`,
+where `sequence` is the native row `seq` (or `line-<n>` when absent) and `identity`
+is the tool call ID for `tool.called`/`tool.returned` and empty otherwise. Several
+normalized events from one source row share the row and are distinguished by kind.
+The archive does not retain the native row `seq` separately, so consumers MUST
+validate the 64-hex shape and treat the value as opaque; do not try to recompute
+it from `source.line`. `session/title` supplies the display title, with the
 first direct user prompt as fallback.
 
 ## Storage and deletion

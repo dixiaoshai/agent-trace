@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "archive_id": "00000000-0000-4000-8000-000000000001",
+  "view": "content",
+  "after_cursor": 0,
+  "next_cursor": 0,
+  "has_more": true,
+  "events": []
+}

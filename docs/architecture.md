@@ -1,12 +1,12 @@
 # 架构说明
 
-状态：Codex、pi 与 DeepSeek Harness（`dsh`）适配器已实现；P1 Trace 常驻采集与本机只读 API 已实现，消费方 follow worker 已进入 P2。更新日期：2026-11-14。
+状态：Codex、pi 与 DeepSeek Harness（`dsh`）适配器已实现；P1 Trace 常驻采集与本机只读 API 已实现，Stats 与 Knowledge 的 follow worker 已实现（P2）；Agent Journal 的 J1a + J1b 模型已实现，launchd 尚未实现。更新日期：2026-11-15。
 
-本文描述已实现的文件批次链路和 P1 Trace 服务。下一阶段的[无 hook 常驻采集与消费方主动拉取](continuous-collection.md)方案已确认：P0 固定[服务配置](service-config.md)、[本机只读 API](local-api.md)契约和[消费方 follow 约定](consumer-follow.md)，P1 实现 `serve`、扫描调度、租约和 HTTP 服务端；`follow` worker 尚未实现。同步状态留在各消费方，Trace 不负责向 Stats/Knowledge 推送。实施清单见 [TODO](../../TODO.md)。
+本文描述已实现的文件批次链路和 P1 Trace 服务。[无 hook 常驻采集与消费方主动拉取](continuous-collection.md)方案已确认：P0 固定[服务配置](service-config.md)、[本机只读 API](local-api.md)契约和[消费方 follow 约定](consumer-follow.md)，P1 实现 `serve`、扫描调度、租约和 HTTP 服务端；Stats 与 Knowledge 的 `follow` 已实现，Agent Journal 的 J1a + J1b 模型已实现，launchd 尚未实现。同步状态留在各消费方，Trace 不负责向 Stats/Knowledge/Journal 推送。实施清单见 [TODO](../../TODO.md)。
 
 ## 项目职责与数据方向
 
-Agent Trace 保存选定执行过程的证据，并向不同消费方提供同一事件流的不同视图。Agent Stats 生成统计，Agent Knowledge 生成可检索的执行证据投影；自动提取、验证和晋升经验尚未实现。
+Agent Trace 保存选定执行过程的证据，并向不同消费方提供同一事件流的不同视图。Agent Stats 生成统计，Agent Knowledge 生成可检索的执行证据投影，Agent Journal（J1a）生成按日回顾；自动提取、验证和晋升经验尚未实现。
 
 ```mermaid
 flowchart TD
@@ -20,17 +20,20 @@ flowchart TD
     B --> K[Agent Knowledge 消费入口]
     K --> KS[(执行证据与消费游标)]
     KS --> Q[CLI / 只读 MCP 检索与来源读取]
+    B --> J[Agent Journal 消费入口<br/>规划中]
+    J --> JD[(按日投影与日报)]
 ```
 
-图中的箭头目前由 CLI 导出/导入 JSON 文件，或由消费方自己的脚本调用 Trace 本机分页 API 完成。P1 的 `serve` 可以独立采集并提供 API，但不会推送或调用下游；Stats/Knowledge 的自动 follow worker 尚未实现。`config-check` 只校验常驻服务配置，不启动采集。Inspector 是独立查看工具，尚未与本模块集成。
+图中的箭头目前由 CLI 导出/导入 JSON 文件，或由消费方自己的脚本调用 Trace 本机分页 API 完成。P1 的 `serve` 可以独立采集并提供 API，但不会推送或调用下游；Stats 与 Knowledge 的自动 follow worker 已实现，Agent Journal 的 J1a + J1b 模型已实现，launchd 尚未实现。`config-check` 只校验常驻服务配置，不启动采集。Inspector 是独立查看工具，尚未与本模块集成。
 
 | 项目 | 拥有的数据与规则 | 对外入口 |
 | --- | --- | --- |
 | Agent Trace | 捕获策略、来源、事件身份、事件证据、统一序列、删除标记 | `ingest/export/read/delete-session/status/config-check/serve` |
 | Agent Stats | 用量归因、费用估算、工具统计、独立消费进度 | `import-archive`、原有看板和查询 |
 | Agent Knowledge | 已授权的归档证据投影、检索、来源读取、独立消费进度 | `archive-import/archive-search/archive-read`、只读 MCP |
+| Agent Journal（J1a+J1b） | 按日回顾产物、cursor/日缓冲、云模型 map/reduce 与用量记录 | `sync/dream/run/status`；50 项测试，launchd 未安装 |
 
-消费方通过版本化批次协议协作，不读写 Agent Trace 的内部数据库。Python 与 TypeScript 共享数据契约，各自保留业务算法和存储。
+消费方通过版本化批次协议协作，不读写 Agent Trace 的内部数据库。Python 与 TypeScript 共享数据契约，各自保留业务算法和存储；协议一致性用例见 [fixtures/protocol](../fixtures/protocol/README.md)。
 
 ## 模块与源码位置
 

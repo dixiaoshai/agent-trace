@@ -142,7 +142,10 @@ export function sourceScopeHash(source: SourceConfig): string {
   const projects = source.projects
     .map(project => [project.project_id, [...project.cwd_allowlist].sort()] as const)
     .sort((left, right) => left[0].localeCompare(right[0]));
-  return hash(JSON.stringify(projects));
+  // Only include the fallback when configured, so existing archives keep their
+  // scope hash; enabling it must invalidate skip decisions for unmatched files.
+  if (source.unmatched_project_id === undefined) return hash(JSON.stringify(projects));
+  return hash(JSON.stringify([projects, source.unmatched_project_id]));
 }
 
 type FileOutcome = 'imported' | 'baselined' | 'unmatched';

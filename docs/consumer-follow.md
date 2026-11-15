@@ -1,8 +1,8 @@
 # 消费方 follow 约定
 
-状态：P0 已固定命令名、配置键、状态输出和错误分类；Trace `serve` 与只读 API 已在 P1 实现，Agent Stats 与 Agent Knowledge 的 follow worker 均已实现并有合成/真实进程验证（P2）。更新日期：2026-11-14。
+状态：P0 已固定命令名、配置键、状态输出和错误分类；Trace `serve` 与只读 API 已在 P1 实现，Agent Stats 与 Agent Knowledge 的 follow worker 均已实现并有合成/真实进程验证（P2）。Agent Journal 的 J1a + J1b 模型与 J1c 1.1/1.2（独立 token、launchd 06:30）复用同一契约并已实现；Knowledge 索引尚未实现。更新日期：2026-11-15。
 
-本约定适用于 Agent Stats 与 Agent Knowledge 各自独立实现的同步 worker。Trace 只提供[只读事件 API](local-api.md)，不保存消费方列表、投递队列或确认游标，也不调用消费方命令。消费进度只在消费方自己的数据库中维护。
+本约定适用于 Agent Stats、Agent Knowledge 以及 Agent Journal 各自独立实现的同步 worker。Trace 只提供[只读事件 API](local-api.md)，不保存消费方列表、投递队列或确认游标，也不调用消费方命令。消费进度只在消费方自己的数据库中维护。
 
 ## 进程与命令
 
@@ -12,7 +12,9 @@
 | Agent Stats | `agent-stats follow --config PATH [--db PATH]` | 本文 `agent-stats.follow.json` | `metadata` |
 | Agent Knowledge | `agent-knowledge follow --config PATH` | 本文 `agent-knowledge.follow.json` | `content` |
 
-- 三个进程独立前台运行，谁先启动都可以；Trace 不等待消费方，消费方不需要看板或 MCP 客户端保持连接。两个 `follow` 命令均已实现：Stats 用 Python，Knowledge 用 TypeScript，各自读取自己的配置和游标。
+Agent Journal 不是常驻 worker，而是每日批处理（06:30 总结前一天，宽限 6 小时），但仍复用本文的固定 `content` 视图、配置键、页+游标同事务和错误分类；它自己实现页校验与游标，不复制 Knowledge 的 follow 代码。命令、配置与日报产物见 [agent-journal README](../../agent-journal/README.md)。J1a + J1b 模型与 J1c 1.1/1.2 已实现（58 项测试，含协议 fixtures、合成 Trace、mock provider 与 fake map/reduce；独立 content 客户端与 launchd 06:30 已安装并 kickstart 验证）；真实 provider 的三天核对尚未完成；单日真实 DeepSeek 日报已生成，不在本 E2E 范围内。
+
+- 三个已实现进程独立前台运行，谁先启动都可以；Trace 不等待消费方，消费方不需要看板或 MCP 客户端保持连接。两个 `follow` 命令均已实现：Stats 用 Python，Knowledge 用 TypeScript，各自读取自己的配置和游标。规划中的 Journal 是每日一次的前台批处理，按同一契约独立实现。
 - Stats 的 `follow` 与看板 `serve` 可分别启停；Knowledge 的 `follow` 与 `serve`（stdio MCP）可分别启停。关闭 MCP 不得停止拉取，关闭看板不得停止 Stats 拉取。
 - `follow` 是独立的 Trace 消费模式。不能在 `follow` 中直读 Codex 日志，也不能把 Stats 现有 `--no-import` 当作完整的 Trace 模式。
 - 前台运行，`Ctrl+C`（SIGINT）或 SIGTERM 触发优雅停止：不再取新页，等待当前本地事务结束，释放租约，输出 `follow.stopped` 后退出。不得在事务中途强制退出。
@@ -21,7 +23,7 @@
 
 ## 配置文件
 
-两个 follow 配置都是严格 JSON，相对路径相对 follow 配置文件目录，未知键拒绝。明文 token 只从环境变量读取，不写入配置或日志。
+两个已实现的 follow 配置都是严格 JSON，相对路径相对 follow 配置文件目录，未知键拒绝。明文 token 只从环境变量读取，不写入配置或日志。规划中的 Journal 复用同一组键，另加 output/model/finalize 配置。
 
 ### Agent Stats
 
@@ -145,4 +147,4 @@ worker 在 stdout 输出逐行 JSON（NDJSON），每行一个事件，全部带
 
 2026-11-14 真实进程端到端（`npm run verify:follow`）：临时 content 归档 + 真实 `agent-trace serve`（API only）+ 真实 Stats `follow` + 真实 Knowledge `follow`。验证追加日志后两个消费方自动更新；分别停止任一消费方时另一方与 Trace 继续工作；重启后从各自已提交游标补取；Stats 会话/Token/工具计数不重复且不含工具正文；Knowledge 逐事件无重复。该脚本使用合成 fixture，可由 `AGENT_STATS_DIR`/`AGENT_KNOWLEDGE_DIR` 指向未合并的 worktree。
 
-仍未验证：真实 Codex/pi 产出的长期同步、真实网络中断/Trace 重启、目标库重建交互、blob 外置正文的消费方读取、跨机部署和 reviewer 独立审查。
+仍未验证：真实 Codex/pi 产出的长期同步、真实网络中断/Trace 重启、目标库重建交互、blob 外置正文的消费方读取、跨机部署和 reviewer 独立审查。Agent Journal 的 J1a 批处理、确定性日报、云模型总结与 J1c 1.1/1.2（独立 token、launchd 06:30）已实现；Knowledge 索引尚未实现，也未包含在本 E2E 验证中。

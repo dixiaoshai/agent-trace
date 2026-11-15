@@ -9,6 +9,7 @@ import {
   ensureCollectionSchema,
   releaseCollectionLease,
   renewCollectionLease,
+  sourceScopeHash,
 } from '../src/collector.ts';
 import {
   STATS_TOKEN_HASH,
@@ -124,6 +125,43 @@ test('project matching uses the session cwd and re-evaluates files after scope c
   assert.equal(imported.unmatched_projects, 0);
   assert.equal(first.archive.highWatermark(), 11);
   assert.ok(first.archive.exportBatch(0, 100).events.every(event => event.project_id === 'demo'));
+});
+
+test('enabling unmatched_project_id re-reads previously unmatched files under the fallback', async t => {
+  const fixture = setup(t, 'all', { cwd: '/synthetic/outside' });
+  const before = loadConfig(fixture.configFile).collection.sources[0]!;
+  const first = open(fixture);
+  t.after(() => first.archive.close());
+  const skipped = await first.collector.scanOnce();
+  assert.equal(skipped.imported, 0);
+  assert.equal(skipped.unmatched_projects, 1);
+  assert.equal(first.archive.highWatermark(), 0);
+
+  writeServiceConfig(fixture.dir, {
+    database: 'state/trace.sqlite',
+    captureMode: 'content',
+    collection: {
+      enabled: true,
+      scan_interval_seconds: 1,
+      backfill: 'all',
+      sources: [{
+        instance_id: 'synthetic-device',
+        root: 'logs',
+        unmatched_project_id: 'unscoped',
+        projects: [],
+      }],
+    },
+    api: { enabled: false },
+  });
+  const config = loadConfig(fixture.configFile);
+  // The scope fingerprint must change so the collector retries unmatched files.
+  assert.notEqual(sourceScopeHash(config.collection.sources[0]!), sourceScopeHash(before));
+  const second = new Collector(config, first.archive, { scheduleScans: false });
+  const imported = await second.scanOnce();
+  assert.equal(imported.imported, 11);
+  assert.equal(imported.unmatched_projects, 0);
+  assert.equal(first.archive.highWatermark(), 11);
+  assert.ok(first.archive.exportBatch(0, 100).events.every(event => event.project_id === 'unscoped'));
 });
 
 test('partial tails wait, malformed lines roll back, and rewrites replace the newer revision', async t => {

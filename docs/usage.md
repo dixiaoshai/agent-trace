@@ -96,7 +96,7 @@ node src/cli.ts export --db .agent-trace/demo.sqlite --after 11 --view metadata 
 
 没有新事件时返回空页与当前游标，属于正常结果。消费失败时不要提前记下导出的 `next_cursor`；只采用消费成功回执。回执丢失可以重试原成功页，消费者会返回已提交的当前游标。
 
-目前 Trace 的 `serve` 可以自动扫描并归档新事件；两个消费方还没有自动 `follow` worker。上面的手动导出/导入仍是端到端验证与离线恢复手段，不会因为 Trace 常驻而被调用。
+目前 Trace 的 `serve` 可以自动扫描并归档新事件；Stats 与 Knowledge 两个消费方已经实现自动 `follow` worker（P2），Agent Journal 的 J1a + J1b 模型与 J1c 1.1/1.2 已实现（独立 content 客户端 + launchd 06:30 安装器，2026-11-15 已安装并 kickstart 验证）。上面的手动导出/导入仍是端到端验证与离线恢复手段，不会因为 Trace 常驻而被调用。
 
 ## 启动常驻采集与只读 API（P1）
 
@@ -107,7 +107,7 @@ node src/cli.ts config-check --config agent-trace.service.example.json
 node src/cli.ts config-check --config path/to/service.json --db path/to/trace.sqlite
 ```
 
-示例默认关闭采集与 API。正式启用前按[服务配置](service-config.md)替换来源、项目 `cwd_allowlist`、数据库、捕获模式和 token 摘要；`config-check` 通过不代表目录存在或数据库捕获模式匹配，`serve` 启动时会再检查并获取采集租约。
+示例默认关闭采集与 API。正式启用前按[服务配置](service-config.md)替换来源、项目 `cwd_allowlist`、数据库、捕获模式和 token 摘要；需要采集来源下全部会话时给来源增加 `unmatched_project_id`（见[全量采集示例](service-config.md#全量采集示例)）。`config-check` 通过不代表目录存在或数据库捕获模式匹配，`serve` 启动时会再检查并获取采集租约。
 
 前台启动：
 

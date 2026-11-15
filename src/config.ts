@@ -33,6 +33,12 @@ export interface SourceConfig {
   /** "auto" detects Codex rollouts and pi sessions from the first record. */
   runtime: RuntimeHint;
   projects: ProjectScope[];
+  /**
+   * Optional fallback project for sessions whose cwd matches no scope (or is
+   * missing/invalid). Setting it turns the source into "collect every session"
+   * mode while reusing the declared projects for precise attribution.
+   */
+  unmatched_project_id?: string;
 }
 
 export interface CollectionConfig {
@@ -164,7 +170,7 @@ function parseClients(value: unknown, at: string): ApiClientConfig[] {
 function parseSources(value: unknown, at: string, directory: string): SourceConfig[] {
   const sources = array(value, at).map((entry, index): SourceConfig => {
     const here = `${at}[${index}]`;
-    const source = strictObject(entry, here, ['instance_id', 'runtime', 'root', 'projects'], ['instance_id', 'root', 'projects']);
+    const source = strictObject(entry, here, ['instance_id', 'runtime', 'root', 'projects', 'unmatched_project_id'], ['instance_id', 'root', 'projects']);
     const instanceId = id(source.instance_id, `${here}.instance_id`);
     const root = resolvePath(source.root, `${here}.root`, directory);
     const runtime = source.runtime === undefined ? 'auto' : runtimeHint(source.runtime);
@@ -172,7 +178,12 @@ function parseSources(value: unknown, at: string, directory: string): SourceConf
       invalid(`${here}.runtime`, 'must be "auto", "codex", "pi" or "dsh" (alias "deepseek-harness")');
     }
     const projects = array(source.projects, `${here}.projects`);
-    if (!projects.length) invalid(`${here}.projects`, 'must contain at least one project scope');
+    const unmatchedProjectId = source.unmatched_project_id === undefined
+      ? undefined
+      : id(source.unmatched_project_id, `${here}.unmatched_project_id`);
+    if (!projects.length && unmatchedProjectId === undefined) {
+      invalid(`${here}.projects`, 'must contain at least one project scope (or set unmatched_project_id to collect everything)');
+    }
     const scopes = projects.map((projectEntry, projectIndex): ProjectScope => {
       const projectAt = `${here}.projects[${projectIndex}]`;
       const project = strictObject(projectEntry, projectAt, ['project_id', 'cwd_allowlist'], ['project_id', 'cwd_allowlist']);
@@ -189,7 +200,16 @@ function parseSources(value: unknown, at: string, directory: string): SourceConf
       if (projectIds.has(project.project_id)) invalid(`${here}.projects[${projectIndex}].project_id`, `duplicate project id "${project.project_id}" in one source`);
       projectIds.add(project.project_id);
     }
-    return { instance_id: instanceId, root, runtime, projects: scopes };
+    if (unmatchedProjectId !== undefined && projectIds.has(unmatchedProjectId)) {
+      invalid(`${here}.unmatched_project_id`, `must differ from the declared project ids (duplicate project id "${unmatchedProjectId}")`);
+    }
+    return {
+      instance_id: instanceId,
+      root,
+      runtime,
+      projects: scopes,
+      ...(unmatchedProjectId === undefined ? {} : { unmatched_project_id: unmatchedProjectId }),
+    };
   });
   const roots = new Map<string, string>();
   for (const [index, source] of sources.entries()) {
@@ -269,12 +289,19 @@ export function loadServiceConfig(filename: string, options: LoadServiceConfigOp
  * Match a session's metadata.cwd against one source's project scopes.
  * The longest matching allowlisted directory wins; an equal-length tie between
  * different projects is ambiguous and is skipped until the configuration is fixed.
+ * When the source declares `unmatched_project_id`, every session that cannot be
+ * attributed to a declared project (no match, or a missing/invalid cwd) is
+ * collected under that fallback id instead of being skipped. Ambiguity remains an
+ * error because it signals a broken allowlist rather than an unknown project.
  * Paths are compared lexically; symlinks are not resolved, so configure the same
  * path form that Codex reports in session metadata.
  */
 export function projectForCwd(source: SourceConfig, cwd: unknown): ProjectMatch | ProjectMismatch {
+  const fallback = (message: string): ProjectMatch | ProjectMismatch => source.unmatched_project_id === undefined
+    ? { error: 'PROJECT_UNMATCHED', message }
+    : { project_id: source.unmatched_project_id };
   if (typeof cwd !== 'string' || !cwd || cwd.trim() !== cwd || cwd.length > MAX_PATH_CHARS || !path.isAbsolute(cwd) || /[\x00-\x1f]/.test(cwd)) {
-    return { error: 'PROJECT_UNMATCHED', message: 'Session cwd is missing, not absolute, or not a bounded path' };
+    return fallback('Session cwd is missing, not absolute, or not a bounded path');
   }
   const target = path.resolve(cwd);
   let bestLength = -1;
@@ -288,7 +315,7 @@ export function projectForCwd(source: SourceConfig, cwd: unknown): ProjectMatch 
       else if (resolved.length === bestLength && !best.includes(project.project_id)) best.push(project.project_id);
     }
   }
-  if (!best.length) return { error: 'PROJECT_UNMATCHED', message: `Session cwd is outside the configured allowlists: ${target}` };
+  if (!best.length) return fallback(`Session cwd is outside the configured allowlists: ${target}`);
   if (best.length > 1) return { error: 'PROJECT_AMBIGUOUS', message: `Session cwd matches multiple projects at the same depth: ${best.join(', ')}` };
   return { project_id: best[0]! };
 }
@@ -313,6 +340,7 @@ export function describeServiceConfig(config: ServiceConfig): JsonObject {
         runtime: source.runtime,
         root: source.root,
         projects: source.projects.map(project => ({ project_id: project.project_id, cwd_allowlist: [...project.cwd_allowlist] })),
+        unmatched_project_id: source.unmatched_project_id ?? null,
       })),
     },
     api: {
